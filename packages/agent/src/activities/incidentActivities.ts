@@ -115,32 +115,70 @@ export async function createIssueForIncident(
   incident: Incident,
   summary?: IncidentSummary | null
 ): Promise<{ created: boolean; url?: string; reason?: string }> {
+  const detailsTable = [
+    "## Incident Details",
+    "",
+    "| Field | Value |",
+    "| --- | --- |",
+    `| ID | \`${incident.id}\` |`,
+    `| Severity | **${incident.severity}** |`,
+    `| Count | **${incident.count}** |`,
+    `| First seen | \`${incident.firstSeen}\` |`,
+    `| Last seen | \`${incident.lastSeen}\` |`,
+  ].join("\n");
+
   const llmSection = summary
     ? [
-        "LLM Summary:",
-        `Summary: ${summary.summary}`,
-        `Root cause hypothesis: ${summary.rootCause}`,
-        `Suggested severity: ${summary.suggestedSeverity} (confidence ${summary.confidence})`,
-        `Suggested labels: ${
-          summary.suggestedLabels.length > 0
-            ? summary.suggestedLabels.join(", ")
-            : "none"
-        }`,
-        "Recommended actions:",
-        ...summary.recommendedActions.map((action) => `- ${action}`),
+        "## LLM Enrichment",
         "",
-      ]
-    : ["LLM Summary: not configured", ""];
+        `- Status: \`generated\``,
+        `- Summary: ${summary.summary}`,
+        `- Root cause hypothesis: ${summary.rootCause}`,
+        `- Suggested severity: **${summary.suggestedSeverity}** (confidence ${summary.confidence})`,
+        `- Suggested labels: ${
+          summary.suggestedLabels.length > 0
+            ? summary.suggestedLabels
+                .map((label: string) => `\`${label}\``)
+                .join(", ")
+            : "_none_"
+        }`,
+        "",
+        "**Recommended actions**",
+        ...summary.recommendedActions.map((action: string) => `- ${action}`),
+      ].join("\n")
+    : [
+        "## LLM Enrichment",
+        "",
+        "- Status: `not_configured_or_failed`",
+        "- Note: Configure an LLM provider or check worker logs for errors.",
+      ].join("\n");
+
+  const evidenceBlock =
+    incident.evidence.length > 0
+      ? ["```json", ...incident.evidence, "```"].join("\n")
+      : "_No evidence samples captured._";
+
+  const evidenceSection = [
+    "## Evidence",
+    "",
+    `<details>`,
+    `<summary>Show ${incident.evidence.length} log samples</summary>`,
+    "",
+    evidenceBlock,
+    "",
+    "</details>",
+  ].join("\n");
 
   const body = [
-    `Severity: **${incident.severity}**`,
-    `Count: **${incident.count}**`,
-    `First seen: ${incident.firstSeen}`,
-    `Last seen: ${incident.lastSeen}`,
+    "# Incident Report",
     "",
-    ...llmSection,
-    "Evidence:",
-    ...incident.evidence.map((line) => `- ${line}`),
+    "> Automated incident detected by Incident Orchestration Agent.",
+    "",
+    detailsTable,
+    "",
+    llmSection,
+    "",
+    evidenceSection,
   ].join("\n");
 
   return createIssue({
