@@ -7,6 +7,7 @@ const ConfigSchema = z.object({
   GITHUB_OWNER: z.string().optional(),
   GITHUB_REPO: z.string().optional(),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
+  DEMO_HEALTH_URL: z.string().optional(),
   POSTGRES_URL: z
     .string()
     .default("postgresql://agentic:agentic@localhost:5432/agentic"),

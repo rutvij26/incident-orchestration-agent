@@ -40,6 +40,7 @@ Required values for production:
 - `POSTGRES_URL` (your memory database)
 - `TEMPORAL_ADDRESS` (Temporal frontend address)
 - `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`
+- `DEMO_HEALTH_URL` (optional healthcheck target)
 
 ## Step 3: Deploy infrastructure
 
@@ -88,11 +89,25 @@ npm run run
 docker compose -f apps/observability/docker-compose.yml exec -T agent npm run run
 ```
 
-## Step 6: Verify results
+## Step 6: Health checks and tests
+
+```
+npm run healthcheck
+npm run test
+```
+
+The healthcheck verifies Loki, Postgres, Temporal, and the demo service.
+
+## Step 7: Verify results
 
 - Check GitHub Issues for created incidents.
 - View logs in Grafana (Loki datasource).
+- Open the "Incident Overview" dashboard in Grafana.
 - Inspect memory table `incident_memory` in Postgres.
+
+## CI
+
+GitHub Actions runs the stack, healthcheck, and unit tests on push/PR using `.github/workflows/ci.yml`.
 
 ## Troubleshooting
 
