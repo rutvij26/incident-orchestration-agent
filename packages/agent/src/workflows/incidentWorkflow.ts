@@ -5,6 +5,7 @@ const {
   fetchRecentLogs,
   detectIncidents,
   persistIncidents,
+  summarizeIncident,
   createIssueForIncident,
 } = proxyActivities<{
   fetchRecentLogs(input: {
@@ -15,7 +16,8 @@ const {
     Array<{ incident: { severity: string } }>
   >;
   persistIncidents(incidents: unknown): Promise<void>;
-  createIssueForIncident(incident: unknown): Promise<{
+  summarizeIncident(incident: unknown): Promise<unknown>;
+  createIssueForIncident(incident: unknown, summary: unknown): Promise<{
     created: boolean;
   }>;
 }>({
@@ -46,7 +48,8 @@ export async function incidentOrchestrationWorkflow(
     ) {
       continue;
     }
-    const result = await createIssueForIncident(incident);
+    const summary = await summarizeIncident(incident);
+    const result = await createIssueForIncident(incident, summary);
     if (result?.created) {
       issuesCreated += 1;
     }

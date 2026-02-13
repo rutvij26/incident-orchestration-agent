@@ -16,6 +16,15 @@ export type Incident = {
   count: number;
 };
 
+export type IncidentSummary = {
+  summary: string;
+  rootCause: string;
+  recommendedActions: string[];
+  suggestedSeverity: IncidentSeverity;
+  suggestedLabels: string[];
+  confidence: number;
+};
+
 export type WorkflowInput = {
   lookbackMinutes: number;
   query: string;

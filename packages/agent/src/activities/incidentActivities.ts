@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { queryLoki } from "../lib/loki.js";
-import type { Incident, LogEvent } from "../lib/types.js";
+import type { Incident, IncidentSummary, LogEvent } from "../lib/types.js";
 import { createIssue } from "../lib/github.js";
 import { initMemory, saveIncidents } from "../memory/postgres.js";
+import { summarizeIncident as summarizeWithLlm } from "../lib/llm.js";
 
 type FetchLogsInput = {
   lookbackMinutes: number;
@@ -29,7 +30,7 @@ function extractSignal(log: LogEvent): {
   let parsed: Record<string, unknown> | null = null;
   try {
     parsed = JSON.parse(log.message);
-    if (typeof parsed.msg === "string") {
+    if (parsed && typeof parsed.msg === "string") {
       message = parsed.msg;
     }
   } catch {
@@ -111,14 +112,33 @@ export async function persistIncidents(incidents: Incident[]): Promise<void> {
 }
 
 export async function createIssueForIncident(
-  incident: Incident
+  incident: Incident,
+  summary?: IncidentSummary | null
 ): Promise<{ created: boolean; url?: string; reason?: string }> {
+  const llmSection = summary
+    ? [
+        "LLM Summary:",
+        `Summary: ${summary.summary}`,
+        `Root cause hypothesis: ${summary.rootCause}`,
+        `Suggested severity: ${summary.suggestedSeverity} (confidence ${summary.confidence})`,
+        `Suggested labels: ${
+          summary.suggestedLabels.length > 0
+            ? summary.suggestedLabels.join(", ")
+            : "none"
+        }`,
+        "Recommended actions:",
+        ...summary.recommendedActions.map((action) => `- ${action}`),
+        "",
+      ]
+    : ["LLM Summary: not configured", ""];
+
   const body = [
     `Severity: **${incident.severity}**`,
     `Count: **${incident.count}**`,
     `First seen: ${incident.firstSeen}`,
     `Last seen: ${incident.lastSeen}`,
     "",
+    ...llmSection,
     "Evidence:",
     ...incident.evidence.map((line) => `- ${line}`),
   ].join("\n");
@@ -128,4 +148,10 @@ export async function createIssueForIncident(
     body,
     labels: ["incident", incident.severity],
   });
+}
+
+export async function summarizeIncident(
+  incident: Incident
+): Promise<IncidentSummary | null> {
+  return summarizeWithLlm(incident);
 }

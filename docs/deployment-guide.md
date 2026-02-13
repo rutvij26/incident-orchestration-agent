@@ -42,6 +42,15 @@ Required values for production:
 - `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`
 - `DEMO_HEALTH_URL` (optional healthcheck target)
 
+Optional LLM enrichment:
+
+- `LLM_PROVIDER` (`auto`, `openai`, `anthropic`, or `gemini`)
+- `OPENAI_API_KEY`, `OPENAI_MODEL` (if using OpenAI)
+- `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (if using Anthropic)
+- `GEMINI_API_KEY`, `GEMINI_MODEL` (if using Gemini)
+
+When configured, the agent adds an LLM summary, root-cause hypothesis, suggested severity, and next steps to each GitHub issue.
+
 ## Step 3: Deploy infrastructure
 
 ### Option A: Use the included Docker Compose (quick start)
