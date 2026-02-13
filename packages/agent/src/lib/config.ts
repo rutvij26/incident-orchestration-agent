@@ -11,6 +11,15 @@ const ConfigSchema = z.object({
   POSTGRES_URL: z
     .string()
     .default("postgresql://agentic:agentic@localhost:5432/agentic"),
+  LLM_PROVIDER: z
+    .enum(["auto", "openai", "anthropic", "gemini"])
+    .default("auto"),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_MODEL: z.string().default("gpt-4o-mini"),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_MODEL: z.string().default("claude-3-5-sonnet-20240620"),
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().default("gemini-1.5-flash"),
   AUTO_ESCALATE_FROM: z
     .enum(["low", "medium", "high", "critical", "none"])
     .default("high"),

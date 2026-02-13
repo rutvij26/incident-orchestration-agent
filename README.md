@@ -46,7 +46,7 @@ flowchart TD
 - Temporal workflows
 - Postgres + pgvector
 - OpenTelemetry + Loki + Grafana
-- OpenAI/Anthropic APIs (optional for enrichment)
+- OpenAI/Anthropic/Gemini APIs (optional for enrichment)
 
 ## Quickstart
 
@@ -64,6 +64,22 @@ flowchart TD
    npm run healthcheck
    npm run test
    ```
+
+### LLM Enrichment (optional)
+
+Provide one provider and set `LLM_PROVIDER` to select which to use:
+
+```
+LLM_PROVIDER=auto
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-4o-mini
+ANTHROPIC_API_KEY=...
+ANTHROPIC_MODEL=claude-3-5-sonnet-20240620
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-1.5-flash
+```
+
+When configured, each incident gets an LLM summary, root-cause hypothesis, suggested severity, and recommended next steps in the GitHub issue body.
 
 ### Local (no Docker) mode
 
