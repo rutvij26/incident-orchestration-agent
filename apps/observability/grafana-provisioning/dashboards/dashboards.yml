@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: IncidentDashboards
+    orgId: 1
+    folder: "Incident Orchestration"
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

@@ -59,6 +59,11 @@ flowchart TD
    ```
    npm run run
    ```
+4. Run healthcheck and tests:
+   ```
+   npm run healthcheck
+   npm run test
+   ```
 
 ### Local (no Docker) mode
 
@@ -72,4 +77,15 @@ npm run run
 ## License
 
 MIT
-# incident-orchestration-agent
+
+## Docs
+
+- Deployment guide: `docs/deployment-guide.md`
+
+## CI
+
+GitHub Actions runs healthchecks and tests on every push/PR.
+
+## Dashboards
+
+Grafana auto-provisions an "Incident Overview" dashboard with demo log panels.

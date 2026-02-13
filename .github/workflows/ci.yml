@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Create .env for compose
+        run: cp .env.example .env
+
+      - name: Start stack
+        run: docker compose -f apps/observability/docker-compose.yml up -d --build
+
+      - name: Wait for services
+        run: sleep 40
+
+      - name: Healthcheck
+        env:
+          TEMPORAL_ADDRESS: localhost:7233
+          LOKI_URL: http://localhost:3100
+          POSTGRES_URL: postgresql://agentic:agentic@localhost:5432/agentic
+          DEMO_HEALTH_URL: http://localhost:4000/health
+        run: npm run healthcheck
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose -f apps/observability/docker-compose.yml logs --no-color --tail 200
+
+      - name: Shutdown stack
+        if: always()
+        run: docker compose -f apps/observability/docker-compose.yml down -v

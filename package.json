@@ -14,7 +14,10 @@
     "dev:stack": "docker compose -f apps/observability/docker-compose.yml up",
     "dev:stack:down": "docker compose -f apps/observability/docker-compose.yml down -v",
     "dev:all": "docker compose -f apps/observability/docker-compose.yml up --build",
-    "run": "npm --workspace @agentic/agent run run"
+    "run": "npm --workspace @agentic/agent run run",
+    "healthcheck": "npm --workspace @agentic/agent run healthcheck",
+    "test:health": "npm --workspace @agentic/agent run test:health",
+    "test": "npm --workspace @agentic/agent run test"
   },
   "keywords": [
     "agentic-ai",
