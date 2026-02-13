@@ -23,8 +23,6 @@ services:
     command: -config.file=/etc/tempo.yml
     ports:
       - "3200:3200"
-      - "4317:4317"
-      - "4318:4318"
     volumes:
       - ./tempo.yml:/etc/tempo.yml:ro
       - tempo_data:/var/tempo
@@ -95,7 +93,7 @@ services:
       - agentic_pgdata:/var/lib/postgresql/data
 
   temporal-postgres:
-    image: postgres:16
+    image: postgres:12
     environment:
       POSTGRES_USER: temporal
       POSTGRES_PASSWORD: temporal
@@ -104,15 +102,26 @@ services:
       - temporal_pgdata:/var/lib/postgresql/data
 
   temporal:
-    image: temporalio/auto-setup:1.25.2
+    build:
+      context: .
+      dockerfile: temporal.Dockerfile
     ports:
       - "7233:7233"
     environment:
-      DB: postgresql
+      DB: postgres12
+      DB_PORT: "5432"
+      SQL_PLUGIN: postgres12
+      SQL_HOST: temporal-postgres
+      SQL_PORT: "5432"
+      SQL_USER: temporal
+      SQL_PASSWORD: temporal
+      SQL_DATABASE: temporal
       POSTGRES_SEEDS: temporal-postgres
       POSTGRES_USER: temporal
       POSTGRES_PWD: temporal
       POSTGRES_DB: temporal
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_PORT: "5432"
     depends_on:
       - temporal-postgres
 

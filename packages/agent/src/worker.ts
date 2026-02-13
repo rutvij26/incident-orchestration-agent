@@ -30,7 +30,11 @@ async function runWorker(): Promise<void> {
 
 runWorker()
   .catch((error) => {
-    logger.error("Worker failed", { error });
+    const payload =
+      error instanceof Error
+        ? { message: error.message, stack: error.stack }
+        : error;
+    logger.error("Worker failed", { error: payload });
     process.exit(1);
   })
   .finally(async () => {
