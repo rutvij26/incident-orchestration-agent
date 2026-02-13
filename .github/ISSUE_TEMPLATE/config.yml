@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/rutvij26/incident-orchestration-agent#readme
+    about: Read the README and deployment guide first.

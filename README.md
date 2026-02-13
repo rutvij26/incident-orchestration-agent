@@ -1,5 +1,8 @@
 # Incident Orchestration Agent
 
+[![CI](https://github.com/rutvij26/incident-orchestration-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/rutvij26/incident-orchestration-agent/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/rutvij26/incident-orchestration-agent)](https://github.com/rutvij26/incident-orchestration-agent/blob/main/LICENSE)
+
 Reliability-first agent that monitors OpenTelemetry + Loki logs, triages incidents, and escalates to GitHub Issues. Built for production engineering signals: Temporal workflows, Postgres + pgvector memory, and safe tooling.
 
 ## Architecture
@@ -97,6 +100,14 @@ MIT
 ## Docs
 
 - Deployment guide: `docs/deployment-guide.md`
+
+## Contributing
+
+See `CONTRIBUTING.md` for setup and contribution guidelines.
+
+## Security
+
+See `SECURITY.md` for reporting vulnerabilities.
 
 ## CI
 
