@@ -1,0 +1,26 @@
+{
+  "name": "incident-orchestration-agent",
+  "version": "0.1.0",
+  "description": "Reliability-first incident orchestration agent with OTel + Loki + GitHub Issues.",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:demo": "npm --workspace @agentic/demo-services run dev",
+    "dev:agent": "npm --workspace @agentic/agent run worker",
+    "dev:stack": "docker compose -f apps/observability/docker-compose.yml up",
+    "dev:stack:down": "docker compose -f apps/observability/docker-compose.yml down -v",
+    "dev:all": "docker compose -f apps/observability/docker-compose.yml up --build",
+    "run": "npm --workspace @agentic/agent run run"
+  },
+  "keywords": [
+    "agentic-ai",
+    "incident-response",
+    "observability"
+  ],
+  "author": "",
+  "license": "MIT"
+}

@@ -1,0 +1,133 @@
+version: "3.9"
+
+services:
+  loki:
+    image: grafana/loki:3.0.0
+    command: -config.file=/etc/loki/config.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yml:/etc/loki/config.yml:ro
+
+  promtail:
+    image: grafana/promtail:3.0.0
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - demo_logs:/var/log/demo:ro
+    depends_on:
+      - loki
+
+  tempo:
+    image: grafana/tempo:2.5.0
+    command: -config.file=/etc/tempo.yml
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - ./tempo.yml:/etc/tempo.yml:ro
+      - tempo_data:/var/tempo
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.103.0
+    command: ["--config=/etc/otel-collector-config.yml"]
+    ports:
+      - "4318:4318"
+    volumes:
+      - ./otel-collector-config.yml:/etc/otel-collector-config.yml:ro
+    depends_on:
+      - tempo
+
+  demo-services:
+    build: ../demo-services
+    ports:
+      - "4000:4000"
+    environment:
+      LOG_PATH: /app/logs/demo-services.log
+      SIMULATE_INCIDENTS: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      DEMO_OTEL_SERVICE_NAME: demo-services
+      PORT: "4000"
+    volumes:
+      - demo_logs:/app/logs
+    depends_on:
+      - otel-collector
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - loki
+      - tempo
+
+  agent:
+    build: ../../packages/agent
+    command: ["npm", "run", "worker"]
+    env_file:
+      - ../../.env
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      LOKI_URL: http://loki:3100
+      POSTGRES_URL: postgresql://agentic:agentic@agentic-postgres:5432/agentic
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: incident-agent
+    depends_on:
+      - temporal
+      - loki
+      - agentic-postgres
+
+  agentic-postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: agentic
+      POSTGRES_PASSWORD: agentic
+      POSTGRES_DB: agentic
+    volumes:
+      - agentic_pgdata:/var/lib/postgresql/data
+
+  temporal-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_DB: temporal
+    volumes:
+      - temporal_pgdata:/var/lib/postgresql/data
+
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    ports:
+      - "7233:7233"
+    environment:
+      DB: postgresql
+      POSTGRES_SEEDS: temporal-postgres
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      POSTGRES_DB: temporal
+    depends_on:
+      - temporal-postgres
+
+  temporal-ui:
+    image: temporalio/ui:2.27.0
+    ports:
+      - "8080:8080"
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      - temporal
+
+volumes:
+  agentic_pgdata:
+  temporal_pgdata:
+  tempo_data:
+  demo_logs:
