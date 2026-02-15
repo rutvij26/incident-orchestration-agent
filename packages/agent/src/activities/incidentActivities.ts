@@ -4,6 +4,8 @@ import type { Incident, IncidentSummary, LogEvent } from "../lib/types.js";
 import { createIssue } from "../lib/github.js";
 import { initMemory, saveIncidents } from "../memory/postgres.js";
 import { summarizeIncident as summarizeWithLlm } from "../lib/llm.js";
+import { autoFixIncident as runAutoFix } from "../autofix/autoFix.js";
+import { refreshRepoCache as refreshRepoCacheImpl } from "../rag/repoCache.js";
 
 type FetchLogsInput = {
   lookbackMinutes: number;
@@ -114,7 +116,7 @@ export async function persistIncidents(incidents: Incident[]): Promise<void> {
 export async function createIssueForIncident(
   incident: Incident,
   summary?: IncidentSummary | null
-): Promise<{ created: boolean; url?: string; reason?: string }> {
+): Promise<{ created: boolean; url?: string; number?: number; reason?: string }> {
   const detailsTable = [
     "## Incident Details",
     "",
@@ -192,4 +194,30 @@ export async function summarizeIncident(
   incident: Incident
 ): Promise<IncidentSummary | null> {
   return summarizeWithLlm(incident);
+}
+
+export async function autoFixIncident(input: {
+  incident: Incident;
+  summary?: IncidentSummary | null;
+  issueNumber: number;
+  issueUrl?: string;
+}): Promise<{
+  status: "skipped" | "failed" | "pr_created";
+  reason?: string;
+  prUrl?: string;
+}> {
+  return runAutoFix(input);
+}
+
+export async function refreshRepoCache(): Promise<{
+  ok: boolean;
+  path?: string;
+  reason?: string;
+}> {
+  try {
+    const repoPath = await refreshRepoCacheImpl();
+    return { ok: true, path: repoPath };
+  } catch (error) {
+    return { ok: false, reason: String(error) };
+  }
 }

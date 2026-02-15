@@ -6,6 +6,7 @@ const {
   detectIncidents,
   persistIncidents,
   summarizeIncident,
+  refreshRepoCache,
   createIssueForIncident,
 } = proxyActivities<{
   fetchRecentLogs(input: {
@@ -17,8 +18,11 @@ const {
   >;
   persistIncidents(incidents: unknown): Promise<void>;
   summarizeIncident(incident: unknown): Promise<unknown>;
+  refreshRepoCache(): Promise<{ ok: boolean }>;
   createIssueForIncident(incident: unknown, summary: unknown): Promise<{
     created: boolean;
+    url?: string;
+    number?: number;
   }>;
 }>({
   startToCloseTimeout: "2 minutes",
@@ -27,9 +31,25 @@ const {
   },
 });
 
+const { autoFixIncident } = proxyActivities<{
+  autoFixIncident(input: {
+    incident: unknown;
+    summary: unknown;
+    issueNumber: number;
+    issueUrl?: string;
+  }): Promise<{ status: string }>;
+}>({
+  startToCloseTimeout: "15 minutes",
+  retry: {
+    maximumAttempts: 1,
+  },
+});
+
 export async function incidentOrchestrationWorkflow(
   input: WorkflowInput
 ): Promise<WorkflowResult> {
+  await refreshRepoCache();
+
   const logs = await fetchRecentLogs({
     lookbackMinutes: input.lookbackMinutes,
     query: input.query,
@@ -52,6 +72,14 @@ export async function incidentOrchestrationWorkflow(
     const result = await createIssueForIncident(incident, summary);
     if (result?.created) {
       issuesCreated += 1;
+      if (result.number) {
+        await autoFixIncident({
+          incident,
+          summary,
+          issueNumber: result.number,
+          issueUrl: result.url,
+        });
+      }
     }
   }
 

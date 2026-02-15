@@ -13,7 +13,9 @@
     "healthcheck": "tsx src/healthcheck.ts",
     "test:health": "tsx src/healthcheck.ts",
     "test": "vitest run --reporter=basic",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "rag:index": "tsx src/rag/indexRepo.ts",
+    "rag:refresh": "tsx src/rag/refreshRepo.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.0",

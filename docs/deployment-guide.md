@@ -51,6 +51,36 @@ Optional LLM enrichment:
 
 When configured, the agent adds an LLM summary, root-cause hypothesis, suggested severity, and next steps to each GitHub issue.
 
+Optional repo RAG:
+
+- `RAG_REPO_PATH` (path to local repo checkout)
+- `RAG_REPO_CACHE_DIR` (default `.agentic/repos`)
+- `RAG_REPO_REFRESH` (`pull` or `reclone`)
+- `EMBEDDING_PROVIDER` (`auto`, `openai`, `gemini`, or `none`)
+- `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `RAG_TOP_K`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`
+
+If `RAG_REPO_PATH` is not set, the agent clones `GITHUB_OWNER/GITHUB_REPO` into `RAG_REPO_CACHE_DIR` using `GITHUB_TOKEN`.
+The cache is refreshed on each workflow run, and you can refresh it manually:
+
+```
+npm run rag:refresh
+```
+
+Optional auto-fix PRs:
+
+- `AUTO_FIX_MODE=on`
+- `AUTO_FIX_SEVERITY` (`low|medium|high|critical|all`)
+- `AUTO_FIX_REPO_PATH` (path to local repo checkout; otherwise uses cached clone)
+- `AUTO_FIX_TEST_COMMAND` (default `npm run test`)
+- `AUTO_FIX_INSTALL_COMMAND` (default `npm install --include=dev`)
+- `AUTO_FIX_SANDBOX_IMAGE` (default `node:20-slim`)
+- `GITHUB_DEFAULT_BRANCH` (default `main`)
+Note: auto-fix runs only when incidents are escalated to issues. Set `AUTO_ESCALATE_FROM=low` to auto-fix all severities.
+
+### Docker auto-fix requirements
+- Mount the Docker socket into the agent container for sandboxed tests (`/var/run/docker.sock`).
+- Bind mount `./.agentic/repos` into the agent container so cached clones persist.
+
 ## Step 3: Deploy infrastructure
 
 ### Option A: Use the included Docker Compose (quick start)
@@ -92,6 +122,18 @@ npm install
 npm run dev:agent
 npm run run
 ```
+
+### Docker note
+The Docker agent runs `npm run rag:index` on startup before the worker. If you want to skip indexing, change the agent command in `apps/observability/docker-compose.yml`.
+
+### Optional: Build repo RAG index
+```
+npm run rag:index
+```
+
+### Optional: Auto-fix PRs
+- Ensure the repo path is accessible on the machine running the agent.
+- Ensure `git` is installed and authenticated with a remote that allows pushes.
 
 ### Docker (agent in container)
 ```
