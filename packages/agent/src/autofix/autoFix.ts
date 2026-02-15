@@ -8,6 +8,7 @@ import { generateFixProposal, generateFixRewrite } from "../lib/llm.js";
 import { retrieveRepoContext } from "../rag/retrieveRepo.js";
 import { runInSandbox } from "../tools/dockerSandbox.js";
 import { createIssueComment, createPullRequest } from "../lib/github.js";
+import { resolveRepoTarget } from "../lib/repoTarget.js";
 import { getCachedRepoPath } from "../rag/repoCache.js";
 
 type AutoFixInput = {
@@ -132,7 +133,8 @@ function resolveSafePath(root: string, relativePath: string): string {
 
 function resolveGitIdentity(): { name: string; email: string } {
   const config = getConfig();
-  const owner = config.GITHUB_OWNER ?? "agentic-bot";
+  const repoTarget = resolveRepoTarget();
+  const owner = repoTarget?.owner ?? config.GITHUB_OWNER ?? "agentic-bot";
   return {
     name: config.GIT_USER_NAME ?? owner,
     email:

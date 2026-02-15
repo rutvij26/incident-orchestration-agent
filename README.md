@@ -84,14 +84,24 @@ GEMINI_MODEL=gemini-1.5-flash
 
 When configured, each incident gets an LLM summary, root-cause hypothesis, suggested severity, and recommended next steps in the GitHub issue body.
 
+### Repository targeting (issues + auto-fix)
+
+Set `REPO_URL` to point the agent at a specific GitHub repo for issue creation and auto-fix PRs. If `REPO_URL` is not provided, the agent falls back to `GITHUB_OWNER` + `GITHUB_REPO`.
+
+```
+REPO_URL=https://github.com/owner/repo
+GITHUB_TOKEN=...
+```
+
 ### Repo RAG (optional)
 
-Index your repo for retrieval-augmented fixes (agent can clone automatically using GitHub config). If `RAG_REPO_PATH` is not set, the agent clones into `RAG_REPO_CACHE_DIR` using `GITHUB_TOKEN` and refreshes the cache at the start of each run:
+Index your repo for retrieval-augmented fixes (agent can clone automatically using GitHub config). If `RAG_REPO_PATH` is not set, the agent clones into `RAG_REPO_CACHE_DIR` using `REPO_URL` (or `GITHUB_OWNER/GITHUB_REPO`) and `GITHUB_TOKEN`:
 
 ```
 RAG_REPO_PATH=/path/to/your/repo
 RAG_REPO_CACHE_DIR=.agentic/repos
 RAG_REPO_REFRESH=pull
+REPO_URL=https://github.com/owner/repo
 EMBEDDING_PROVIDER=auto
 EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIM=1536
@@ -103,6 +113,8 @@ Then run:
 ```
 npm run rag:index
 ```
+
+The indexer is idempotent: it skips re-embedding if the repo HEAD has not changed.
 
 Refresh the cache without indexing:
 
@@ -127,7 +139,7 @@ GITHUB_DEFAULT_BRANCH=main
 Auto-fix runs a sandboxed test command before creating a PR and links the incident issue.
 Auto-fix only runs for incidents that are escalated to issues. Set `AUTO_ESCALATE_FROM=low` if you want auto-fix for all severities.
 When running in Docker, auto-fix requires the Docker socket mounted into the agent container and a bind mount for `./.agentic/repos`.
-In Docker, the agent runs `npm run rag:index` on startup before the worker.
+In Docker, the agent starts the worker only. Run `npm run rag:index` manually when you want to (the indexer skips if the repo HEAD hasn't changed).
 
 ### Local (no Docker) mode
 
@@ -145,6 +157,8 @@ MIT
 ## Docs
 
 - Deployment guide: `docs/deployment-guide.md`
+- Functionality flows: `docs/functional-flows.md`
+- Pricing estimates: `docs/pricing-estimates.md`
 
 ## Contributing
 

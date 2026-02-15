@@ -1,10 +1,20 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import { getConfig } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
 import { embedText } from "../lib/embeddings.js";
-import { cleanupRepoChunks, initRepoMemory, upsertRepoChunks } from "../memory/repo.js";
+import {
+  cleanupRepoChunks,
+  clearRepoEmbeddings,
+  getRepoIndexState,
+  hasRepoEmbeddings,
+  initRepoMemory,
+  setRepoIndexState,
+  upsertRepoChunks,
+} from "../memory/repo.js";
+import { resolveRepoTarget } from "../lib/repoTarget.js";
 import { getCachedRepoPath } from "./repoCache.js";
 
 const IGNORED_DIRS = new Set([
@@ -100,6 +110,37 @@ function hashContent(content: string): string {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
 
+async function execGit(
+  args: string[],
+  cwd: string
+): Promise<{ code: number; output: string }> {
+  return new Promise((resolve) => {
+    const child = spawn("git", args, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    child.stdout.on("data", (data) => {
+      output += data.toString();
+    });
+    child.stderr.on("data", (data) => {
+      output += data.toString();
+    });
+    child.on("close", (code) => resolve({ code: code ?? 1, output }));
+    child.on("error", (error) =>
+      resolve({ code: 1, output: String(error) })
+    );
+  });
+}
+
+async function getRepoHeadSha(repoPath: string): Promise<string | null> {
+  const result = await execGit(["rev-parse", "HEAD"], repoPath);
+  if (result.code !== 0) {
+    return null;
+  }
+  return result.output.trim() || null;
+}
+
 async function buildChunks(
   repoPath: string,
   filePath: string,
@@ -137,9 +178,31 @@ export async function indexRepository(): Promise<void> {
   const ragPath = config.RAG_REPO_PATH?.trim();
   const autoFixPath = config.AUTO_FIX_REPO_PATH?.trim();
   const repoPath = ragPath || autoFixPath || (await getCachedRepoPath());
+  const target = resolveRepoTarget();
+  const repoKey = target?.repoKey ?? repoPath;
+  const headSha = await getRepoHeadSha(repoPath);
 
   logger.info("Starting repo indexing", { repoPath });
   await initRepoMemory();
+  const hasEmbeddings = await hasRepoEmbeddings();
+  const existingState = await getRepoIndexState(repoKey);
+  if (headSha && existingState?.headSha === headSha && hasEmbeddings) {
+    logger.info("Repo indexing skipped (unchanged)", { repoKey, headSha });
+    return;
+  }
+  if (hasEmbeddings && (!existingState || (headSha && existingState.headSha !== headSha))) {
+    logger.info("Clearing stale repo embeddings", {
+      repoKey,
+      previousHeadSha: existingState?.headSha,
+      headSha,
+    });
+    await clearRepoEmbeddings();
+  }
+  if (!headSha) {
+    logger.info("Repo head SHA unavailable; indexing without cache check", {
+      repoKey,
+    });
+  }
 
   const files = await walkFiles(repoPath);
   logger.info("Repo files discovered", { count: files.length });
@@ -172,6 +235,9 @@ export async function indexRepository(): Promise<void> {
     }
   }
 
+  if (headSha) {
+    await setRepoIndexState(repoKey, headSha);
+  }
   logger.info("Repo indexing complete");
 }
 

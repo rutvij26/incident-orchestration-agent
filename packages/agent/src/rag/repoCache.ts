@@ -2,10 +2,19 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { getConfig } from "../lib/config.js";
+import { buildCloneUrl, resolveRepoTarget } from "../lib/repoTarget.js";
 import { logger } from "../lib/logger.js";
 
-function buildRepoDir(owner: string, repo: string, root: string): string {
-  return path.join(root, `${owner}-${repo}`);
+function buildRepoDir(
+  host: string,
+  owner: string,
+  repo: string,
+  root: string
+): string {
+  const base =
+    host === "github.com" ? `${owner}-${repo}` : `${host}-${owner}-${repo}`;
+  const safe = base.replace(/[^a-zA-Z0-9._-]+/g, "-");
+  return path.join(root, safe);
 }
 
 async function execGit(
@@ -31,15 +40,6 @@ async function execGit(
   });
 }
 
-function buildCloneUrl(
-  owner: string,
-  repo: string,
-  token: string
-): string {
-  const sanitized = token.replace(/@/g, "%40");
-  return `https://${sanitized}@github.com/${owner}/${repo}.git`;
-}
-
 async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
 }
@@ -57,17 +57,21 @@ export async function getCachedRepoPath(options?: {
   refresh?: "pull" | "reclone";
 }): Promise<string> {
   const config = getConfig();
-  const { GITHUB_OWNER, GITHUB_REPO, GITHUB_TOKEN } = config;
-  if (!GITHUB_OWNER || !GITHUB_REPO || !GITHUB_TOKEN) {
-    throw new Error("Missing GitHub configuration for repo cache");
+  const target = resolveRepoTarget();
+  if (!target) {
+    throw new Error("Missing repo configuration for repo cache");
   }
 
   const cacheRoot = path.resolve(process.cwd(), config.RAG_REPO_CACHE_DIR);
-  const repoDir = buildRepoDir(GITHUB_OWNER, GITHUB_REPO, cacheRoot);
+  const repoDir = buildRepoDir(target.host, target.owner, target.repo, cacheRoot);
   await ensureDir(cacheRoot);
 
   const hasRepo = await exists(repoDir);
-  const cloneUrl = buildCloneUrl(GITHUB_OWNER, GITHUB_REPO, GITHUB_TOKEN);
+  const cloneUrl = buildCloneUrl(
+    target,
+    config.GITHUB_TOKEN,
+    config.REPO_URL
+  );
   const branch = config.GITHUB_DEFAULT_BRANCH;
   const refreshMode = options?.refresh ?? config.RAG_REPO_REFRESH;
 
