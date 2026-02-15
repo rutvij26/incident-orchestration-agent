@@ -159,6 +159,7 @@ MIT
 - Deployment guide: `docs/deployment-guide.md`
 - Functionality flows: `docs/functional-flows.md`
 - Pricing estimates: `docs/pricing-estimates.md`
+- Milestone checklist: `docs/milestone-checklist.md`
 
 ## Contributing
 
