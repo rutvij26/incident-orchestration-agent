@@ -50,7 +50,7 @@ async function main(): Promise<void> {
     res.status(401).json({ error: "Unauthorized" });
   });
 
-  if (process.env.SIMULATE_INCIDENTS === "true") {
+  if (process.env.SIMULATE_INCIDENTS === "true" && process.env.NODE_ENV !== "production") {
     setInterval(() => {
       logger.error(
         {
