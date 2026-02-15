@@ -1,5 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import { getConfig } from "./config.js";
+import { resolveRepoTarget } from "./repoTarget.js";
 
 export type IssueInput = {
   title: string;
@@ -15,8 +16,9 @@ export type IssueResult = {
 };
 
 export async function createIssue(input: IssueInput): Promise<IssueResult> {
-  const { GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO } = getConfig();
-  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
+  const { GITHUB_TOKEN } = getConfig();
+  const target = resolveRepoTarget();
+  if (!GITHUB_TOKEN || !target) {
     return {
       created: false,
       reason: "Missing GitHub configuration",
@@ -25,8 +27,8 @@ export async function createIssue(input: IssueInput): Promise<IssueResult> {
 
   const octokit = new Octokit({ auth: GITHUB_TOKEN });
   const response = await octokit.issues.create({
-    owner: GITHUB_OWNER,
-    repo: GITHUB_REPO,
+    owner: target.owner,
+    repo: target.repo,
     title: input.title,
     body: input.body,
     labels: input.labels,
@@ -43,14 +45,15 @@ export async function createIssueComment(
   issueNumber: number,
   body: string
 ): Promise<{ created: boolean; url?: string; reason?: string }> {
-  const { GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO } = getConfig();
-  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
+  const { GITHUB_TOKEN } = getConfig();
+  const target = resolveRepoTarget();
+  if (!GITHUB_TOKEN || !target) {
     return { created: false, reason: "Missing GitHub configuration" };
   }
   const octokit = new Octokit({ auth: GITHUB_TOKEN });
   const response = await octokit.issues.createComment({
-    owner: GITHUB_OWNER,
-    repo: GITHUB_REPO,
+    owner: target.owner,
+    repo: target.repo,
     issue_number: issueNumber,
     body,
   });
@@ -65,14 +68,15 @@ export async function createPullRequest(input: {
   draft?: boolean;
   labels?: string[];
 }): Promise<{ created: boolean; url?: string; reason?: string }> {
-  const { GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO } = getConfig();
-  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
+  const { GITHUB_TOKEN } = getConfig();
+  const target = resolveRepoTarget();
+  if (!GITHUB_TOKEN || !target) {
     return { created: false, reason: "Missing GitHub configuration" };
   }
   const octokit = new Octokit({ auth: GITHUB_TOKEN });
   const response = await octokit.pulls.create({
-    owner: GITHUB_OWNER,
-    repo: GITHUB_REPO,
+    owner: target.owner,
+    repo: target.repo,
     title: input.title,
     body: input.body,
     head: input.head,
@@ -83,8 +87,8 @@ export async function createPullRequest(input: {
   if (input.labels && input.labels.length > 0) {
     try {
       await octokit.issues.addLabels({
-        owner: GITHUB_OWNER,
-        repo: GITHUB_REPO,
+        owner: target.owner,
+        repo: target.repo,
         issue_number: response.data.number,
         labels: input.labels,
       });

@@ -6,6 +6,7 @@ const ConfigSchema = z.object({
   GITHUB_TOKEN: z.string().optional(),
   GITHUB_OWNER: z.string().optional(),
   GITHUB_REPO: z.string().optional(),
+  REPO_URL: z.string().optional(),
   GIT_USER_NAME: z.string().optional(),
   GIT_USER_EMAIL: z.string().optional(),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),

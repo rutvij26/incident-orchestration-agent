@@ -76,7 +76,7 @@ services:
 
   agent:
     build: ../../packages/agent
-    command: ["/bin/sh", "-lc", "npm run rag:index && npm run worker"]
+    command: ["/bin/sh", "-lc", "npm run worker"]
     env_file:
       - ../../.env
     environment:

@@ -39,7 +39,7 @@ Required values for production:
 - `LOKI_URL` (your Loki endpoint)
 - `POSTGRES_URL` (your memory database)
 - `TEMPORAL_ADDRESS` (Temporal frontend address)
-- `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`
+- `GITHUB_TOKEN`, `REPO_URL` (or `GITHUB_OWNER` + `GITHUB_REPO`)
 - `DEMO_HEALTH_URL` (optional healthcheck target)
 
 Optional LLM enrichment:
@@ -56,6 +56,7 @@ Optional repo RAG:
 - `RAG_REPO_PATH` (path to local repo checkout)
 - `RAG_REPO_CACHE_DIR` (default `.agentic/repos`)
 - `RAG_REPO_REFRESH` (`pull` or `reclone`)
+- `REPO_URL` (used to clone if `RAG_REPO_PATH` is not set)
 - `EMBEDDING_PROVIDER` (`auto`, `openai`, `gemini`, or `none`)
 - `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `RAG_TOP_K`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`
 
@@ -124,7 +125,7 @@ npm run run
 ```
 
 ### Docker note
-The Docker agent runs `npm run rag:index` on startup before the worker. If you want to skip indexing, change the agent command in `apps/observability/docker-compose.yml`.
+The Docker agent starts the worker only. Run `npm run rag:index` manually when you want to (the indexer skips if the repo HEAD hasn't changed).
 
 ### Optional: Build repo RAG index
 ```
