@@ -84,6 +84,51 @@ GEMINI_MODEL=gemini-1.5-flash
 
 When configured, each incident gets an LLM summary, root-cause hypothesis, suggested severity, and recommended next steps in the GitHub issue body.
 
+### Repo RAG (optional)
+
+Index your repo for retrieval-augmented fixes (agent can clone automatically using GitHub config). If `RAG_REPO_PATH` is not set, the agent clones into `RAG_REPO_CACHE_DIR` using `GITHUB_TOKEN` and refreshes the cache at the start of each run:
+
+```
+RAG_REPO_PATH=/path/to/your/repo
+RAG_REPO_CACHE_DIR=.agentic/repos
+RAG_REPO_REFRESH=pull
+EMBEDDING_PROVIDER=auto
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIM=1536
+RAG_TOP_K=6
+```
+
+Then run:
+
+```
+npm run rag:index
+```
+
+Refresh the cache without indexing:
+
+```
+npm run rag:refresh
+```
+
+### Auto-fix PRs (optional)
+
+Enable auto-fix and point the agent at a local repo checkout (or let it clone):
+
+```
+AUTO_FIX_MODE=on
+AUTO_FIX_SEVERITY=all
+AUTO_FIX_REPO_PATH=/path/to/your/repo
+AUTO_FIX_TEST_COMMAND=npm run test
+AUTO_FIX_INSTALL_COMMAND=npm install --include=dev
+AUTO_FIX_SANDBOX_IMAGE=node:20-slim
+GITHUB_DEFAULT_BRANCH=main
+```
+
+Auto-fix runs a sandboxed test command before creating a PR and links the incident issue.
+Auto-fix only runs for incidents that are escalated to issues. Set `AUTO_ESCALATE_FROM=low` if you want auto-fix for all severities.
+When running in Docker, auto-fix requires the Docker socket mounted into the agent container and a bind mount for `./.agentic/repos`.
+In Docker, the agent runs `npm run rag:index` on startup before the worker.
+
 ### Local (no Docker) mode
 
 ```
