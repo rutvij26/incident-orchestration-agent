@@ -4,9 +4,9 @@ Track implementation status for each prioritized milestone.
 
 ### RAG Isolation + Incremental Indexing
 
-- [ ] Add `repo_key` to `repo_embeddings` and scope retrieval by repo.
-- [ ] Re-embed only changed chunks (use `content_hash` or `git diff`).
-- [ ] Add minimum similarity threshold for retrieved context.
+- [x] Add `repo_key` to `repo_embeddings` and scope retrieval by repo.
+- [x] Re-embed only changed chunks (use `content_hash` or `git diff`).
+- [x] Add minimum similarity threshold for retrieved context.
 
 ### Auto-fix Decision Scoring
 

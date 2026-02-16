@@ -12,7 +12,7 @@ const DEFAULT_QUERY = '{job="demo-services"}';
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  label: string
+  label: string,
 ): Promise<T> {
   let timeoutId: NodeJS.Timeout;
   const timeout = new Promise<never>((_, reject) => {
@@ -27,6 +27,9 @@ async function withTimeout<T>(
   }
 }
 
+/**
+ * Run the incident workflow once.
+ */
 async function runOnce(): Promise<void> {
   const { TEMPORAL_ADDRESS, AUTO_ESCALATE_FROM } = getConfig();
 
@@ -37,38 +40,53 @@ async function runOnce(): Promise<void> {
     query: DEFAULT_QUERY,
   });
 
+  /**
+   * Connect to Temporal.
+   */
+
   logger.info("Connecting to Temporal", { temporalAddress: TEMPORAL_ADDRESS });
   const connection = await withTimeout(
     Connection.connect({
       address: TEMPORAL_ADDRESS,
     }),
     CONNECTION_TIMEOUT_MS,
-    "Temporal connection"
+    "Temporal connection",
   );
   logger.info("Connected to Temporal");
 
+  /**
+   * Create a Temporal client.
+   */
   const client = new Client({
     namespace: "default",
     connection,
   });
 
   logger.info("Starting incident workflow execution");
+
+  /**
+   * Execute the incident workflow.
+   */
   const result = await withTimeout(
     client.workflow.execute(incidentOrchestrationWorkflow, {
-    taskQueue: "incident-orchestration",
-    workflowId: `incident-orchestration-${Date.now()}`,
+      taskQueue: "incident-orchestration",
+      workflowId: `incident-orchestration-${Date.now()}`,
       workflowExecutionTimeout: "2 minutes",
-    args: [
-      {
+      args: [
+        {
           lookbackMinutes: LOOKBACK_MINUTES,
           query: DEFAULT_QUERY,
           autoEscalateFrom: AUTO_ESCALATE_FROM,
-      },
-    ],
+        },
+      ],
     }),
     WORKFLOW_TIMEOUT_MS,
-    "Workflow execution"
+    "Workflow execution",
   );
+
+  /**
+   * Log the workflow result.
+   */
 
   logger.info("Workflow completed", result as Record<string, unknown>);
 }

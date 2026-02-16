@@ -13,13 +13,16 @@ const {
     lookbackMinutes: number;
     query: string;
   }): Promise<unknown>;
-  detectIncidents(logs: unknown): Promise<
-    Array<{ incident: { severity: string } }>
-  >;
+  detectIncidents(
+    logs: unknown,
+  ): Promise<Array<{ incident: { severity: string } }>>;
   persistIncidents(incidents: unknown): Promise<void>;
   summarizeIncident(incident: unknown): Promise<unknown>;
   refreshRepoCache(): Promise<{ ok: boolean }>;
-  createIssueForIncident(incident: unknown, summary: unknown): Promise<{
+  createIssueForIncident(
+    incident: unknown,
+    summary: unknown,
+  ): Promise<{
     created: boolean;
     url?: string;
     number?: number;
@@ -45,26 +48,46 @@ const { autoFixIncident } = proxyActivities<{
   },
 });
 
+/**
+ * The incident orchestration workflow.
+ * @param input - @type {WorkflowInput}
+ * @returns @type {WorkflowResult}
+ */
 export async function incidentOrchestrationWorkflow(
-  input: WorkflowInput
+  input: WorkflowInput,
 ): Promise<WorkflowResult> {
+  /**
+   * Refresh the repository cache.
+   */
   await refreshRepoCache();
 
+  /**
+   * Fetch the recent logs.
+   */
   const logs = await fetchRecentLogs({
     lookbackMinutes: input.lookbackMinutes,
     query: input.query,
   });
 
+  /**
+   * Detect the incidents.
+   */
   const detected = await detectIncidents(logs);
   const incidents = detected.map((item: any) => item.incident);
+
+  /**
+   * Persist the incidents.
+   */
   await persistIncidents(incidents);
 
+  /**
+   * Create issues for the incidents.
+   */
   let issuesCreated = 0;
   for (const incident of incidents) {
     if (
       input.autoEscalateFrom === "none" ||
-      severityRank(incident.severity) <
-        severityRank(input.autoEscalateFrom)
+      severityRank(incident.severity) < severityRank(input.autoEscalateFrom)
     ) {
       continue;
     }

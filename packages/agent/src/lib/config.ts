@@ -52,12 +52,16 @@ const ConfigSchema = z.object({
 
 let cachedConfig: z.infer<typeof ConfigSchema> | null = null;
 
+/** Gets the configuration from the environment. */
 export function getConfig(): z.infer<typeof ConfigSchema> {
+  // local cache
   if (cachedConfig) {
     return cachedConfig;
   }
-
+  // parse the environment variables
   const parsed = ConfigSchema.parse(process.env);
+  // cache the configuration
   cachedConfig = parsed;
+  // return the configuration
   return parsed;
 }
