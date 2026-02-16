@@ -12,15 +12,15 @@ type LokiQueryResponse = {
   };
 };
 
+/** Query the Loki logs. */
 export async function queryLoki(
   query: string,
   lookbackMinutes: number,
-  limit = 500
+  limit = 500,
 ): Promise<LogEvent[]> {
   const { LOKI_URL } = getConfig();
   const endNs = BigInt(Date.now()) * 1_000_000n;
-  const startNs =
-    endNs - BigInt(lookbackMinutes) * 60n * 1_000_000_000n;
+  const startNs = endNs - BigInt(lookbackMinutes) * 60n * 1_000_000_000n;
 
   const params = new URLSearchParams({
     query,
@@ -30,7 +30,7 @@ export async function queryLoki(
   });
 
   const response = await fetch(
-    `${LOKI_URL}/loki/api/v1/query_range?${params.toString()}`
+    `${LOKI_URL}/loki/api/v1/query_range?${params.toString()}`,
   );
   if (!response.ok) {
     throw new Error(`Loki query failed: ${response.status}`);

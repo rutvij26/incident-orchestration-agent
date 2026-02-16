@@ -87,7 +87,9 @@ export function parseRepoUrl(input: string): RepoTarget | null {
   return null;
 }
 
+/** Resolve the repository target. */
 export function resolveRepoTarget(): RepoTarget | null {
+  // parse the repository URL
   const config = getConfig();
   const repoUrl = config.REPO_URL?.trim();
   if (repoUrl) {
@@ -128,7 +130,7 @@ export function resolveRepoKey(repoPath?: string): string | null {
 export function buildCloneUrl(
   target: RepoTarget,
   token?: string,
-  repoUrl?: string
+  repoUrl?: string,
 ): string {
   if (token) {
     const sanitized = token.replace(/@/g, "%40");

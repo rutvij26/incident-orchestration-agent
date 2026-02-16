@@ -13,7 +13,7 @@ type FetchLogsInput = {
 };
 
 export async function fetchRecentLogs(
-  input: FetchLogsInput
+  input: FetchLogsInput,
 ): Promise<LogEvent[]> {
   return queryLoki(input.query, input.lookbackMinutes);
 }
@@ -63,7 +63,7 @@ function extractSignal(log: LogEvent): {
 }
 
 export async function detectIncidents(
-  logs: LogEvent[]
+  logs: LogEvent[],
 ): Promise<DetectedIncident[]> {
   const buckets = new Map<
     string,
@@ -115,8 +115,13 @@ export async function persistIncidents(incidents: Incident[]): Promise<void> {
 
 export async function createIssueForIncident(
   incident: Incident,
-  summary?: IncidentSummary | null
-): Promise<{ created: boolean; url?: string; number?: number; reason?: string }> {
+  summary?: IncidentSummary | null,
+): Promise<{
+  created: boolean;
+  url?: string;
+  number?: number;
+  reason?: string;
+}> {
   const detailsTable = [
     "## Incident Details",
     "",
@@ -191,7 +196,7 @@ export async function createIssueForIncident(
 }
 
 export async function summarizeIncident(
-  incident: Incident
+  incident: Incident,
 ): Promise<IncidentSummary | null> {
   return summarizeWithLlm(incident);
 }
@@ -209,6 +214,7 @@ export async function autoFixIncident(input: {
   return runAutoFix(input);
 }
 
+/** Refresh the repository cache. */
 export async function refreshRepoCache(): Promise<{
   ok: boolean;
   path?: string;
