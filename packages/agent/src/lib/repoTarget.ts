@@ -105,6 +105,26 @@ export function resolveRepoTarget(): RepoTarget | null {
   return null;
 }
 
+export function resolveRepoKey(repoPath?: string): string | null {
+  const target = resolveRepoTarget();
+  if (target) {
+    return target.repoKey;
+  }
+  if (repoPath) {
+    return repoPath;
+  }
+  const config = getConfig();
+  const ragPath = config.RAG_REPO_PATH?.trim();
+  if (ragPath) {
+    return ragPath;
+  }
+  const autoFixPath = config.AUTO_FIX_REPO_PATH?.trim();
+  if (autoFixPath) {
+    return autoFixPath;
+  }
+  return null;
+}
+
 export function buildCloneUrl(
   target: RepoTarget,
   token?: string,

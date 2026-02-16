@@ -15,6 +15,7 @@ function getPool(): pg.Pool {
 }
 
 export type RepoChunk = {
+  repoKey: string;
   path: string;
   chunkIndex: number;
   content: string;
@@ -45,6 +46,7 @@ export async function initRepoMemory(): Promise<void> {
     await client.query(`
       CREATE TABLE IF NOT EXISTS repo_embeddings (
         id TEXT PRIMARY KEY,
+        repo_key TEXT,
         path TEXT NOT NULL,
         chunk_index INTEGER NOT NULL,
         content TEXT NOT NULL,
@@ -53,9 +55,21 @@ export async function initRepoMemory(): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+    await client.query(
+      "ALTER TABLE repo_embeddings ADD COLUMN IF NOT EXISTS repo_key TEXT"
+    );
+    await client.query(
+      "UPDATE repo_embeddings SET repo_key = 'default' WHERE repo_key IS NULL"
+    );
+    await client.query(
+      "ALTER TABLE repo_embeddings ALTER COLUMN repo_key SET NOT NULL"
+    );
     await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS repo_embeddings_path_chunk_idx
-      ON repo_embeddings(path, chunk_index)
+      DROP INDEX IF EXISTS repo_embeddings_path_chunk_idx
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS repo_embeddings_repo_path_chunk_idx
+      ON repo_embeddings(repo_key, path, chunk_index)
     `);
     await client.query(`
       CREATE TABLE IF NOT EXISTS repo_index_state (
@@ -125,15 +139,17 @@ export async function setRepoIndexState(
   }
 }
 
-export async function hasRepoEmbeddings(): Promise<boolean> {
+export async function hasRepoEmbeddings(repoKey: string): Promise<boolean> {
   const client = await getPool().connect();
   try {
     const response = await client.query(
       `
       SELECT 1
       FROM repo_embeddings
+      WHERE repo_key = $1
       LIMIT 1
-      `
+      `,
+      [repoKey]
     );
     return response.rowCount > 0;
   } finally {
@@ -141,10 +157,12 @@ export async function hasRepoEmbeddings(): Promise<boolean> {
   }
 }
 
-export async function clearRepoEmbeddings(): Promise<void> {
+export async function clearRepoEmbeddings(repoKey: string): Promise<void> {
   const client = await getPool().connect();
   try {
-    await client.query("DELETE FROM repo_embeddings");
+    await client.query("DELETE FROM repo_embeddings WHERE repo_key = $1", [
+      repoKey,
+    ]);
   } finally {
     client.release();
   }
@@ -160,16 +178,17 @@ export async function upsertRepoChunks(chunks: RepoChunk[]): Promise<void> {
       await client.query(
         `
         INSERT INTO repo_embeddings (
-          id, path, chunk_index, content, content_hash, embedding, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, now())
-        ON CONFLICT (path, chunk_index) DO UPDATE SET
+          id, repo_key, path, chunk_index, content, content_hash, embedding, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+        ON CONFLICT (repo_key, path, chunk_index) DO UPDATE SET
           content = EXCLUDED.content,
           content_hash = EXCLUDED.content_hash,
           embedding = EXCLUDED.embedding,
           updated_at = now()
         `,
         [
-          `${chunk.path}:${chunk.chunkIndex}`,
+          `${chunk.repoKey}:${chunk.path}:${chunk.chunkIndex}`,
+          chunk.repoKey,
           chunk.path,
           chunk.chunkIndex,
           chunk.content,
@@ -184,6 +203,7 @@ export async function upsertRepoChunks(chunks: RepoChunk[]): Promise<void> {
 }
 
 export async function cleanupRepoChunks(
+  repoKey: string,
   path: string,
   maxIndex: number
 ): Promise<void> {
@@ -192,9 +212,9 @@ export async function cleanupRepoChunks(
     await client.query(
       `
       DELETE FROM repo_embeddings
-      WHERE path = $1 AND chunk_index > $2
+      WHERE repo_key = $1 AND path = $2 AND chunk_index > $3
       `,
-      [path, maxIndex]
+      [repoKey, path, maxIndex]
     );
   } finally {
     client.release();
@@ -203,7 +223,9 @@ export async function cleanupRepoChunks(
 
 export async function searchRepoChunks(
   embedding: number[],
-  limit: number
+  limit: number,
+  repoKey: string,
+  minScore = 0
 ): Promise<RepoSearchResult[]> {
   const client = await getPool().connect();
   try {
@@ -211,17 +233,78 @@ export async function searchRepoChunks(
       `
       SELECT path, content, (1 - (embedding <-> $1)) AS score
       FROM repo_embeddings
-      WHERE embedding IS NOT NULL
+      WHERE repo_key = $2
+        AND embedding IS NOT NULL
+        AND (1 - (embedding <-> $1)) >= $3
       ORDER BY embedding <-> $1
-      LIMIT $2
+      LIMIT $4
       `,
-      [toVectorParam(embedding), limit]
+      [toVectorParam(embedding), repoKey, minScore, limit]
     );
     return response.rows.map((row) => ({
       path: row.path as string,
       content: row.content as string,
       score: Number(row.score),
     }));
+  } finally {
+    client.release();
+  }
+}
+
+export async function getRepoChunkHashes(
+  repoKey: string,
+  path: string
+): Promise<Map<number, string>> {
+  const client = await getPool().connect();
+  try {
+    const response = await client.query(
+      `
+      SELECT chunk_index, content_hash
+      FROM repo_embeddings
+      WHERE repo_key = $1 AND path = $2
+      `,
+      [repoKey, path]
+    );
+    const map = new Map<number, string>();
+    for (const row of response.rows) {
+      map.set(Number(row.chunk_index), row.content_hash as string);
+    }
+    return map;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listRepoPaths(repoKey: string): Promise<string[]> {
+  const client = await getPool().connect();
+  try {
+    const response = await client.query(
+      `
+      SELECT DISTINCT path
+      FROM repo_embeddings
+      WHERE repo_key = $1
+      `,
+      [repoKey]
+    );
+    return response.rows.map((row) => row.path as string);
+  } finally {
+    client.release();
+  }
+}
+
+export async function deleteRepoChunksForPath(
+  repoKey: string,
+  path: string
+): Promise<void> {
+  const client = await getPool().connect();
+  try {
+    await client.query(
+      `
+      DELETE FROM repo_embeddings
+      WHERE repo_key = $1 AND path = $2
+      `,
+      [repoKey, path]
+    );
   } finally {
     client.release();
   }

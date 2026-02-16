@@ -58,7 +58,7 @@ Optional repo RAG:
 - `RAG_REPO_REFRESH` (`pull` or `reclone`)
 - `REPO_URL` (used to clone if `RAG_REPO_PATH` is not set)
 - `EMBEDDING_PROVIDER` (`auto`, `openai`, `gemini`, or `none`)
-- `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `RAG_TOP_K`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`
+- `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `RAG_TOP_K`, `RAG_MIN_SCORE`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`
 
 If `RAG_REPO_PATH` is not set, the agent clones `GITHUB_OWNER/GITHUB_REPO` into `RAG_REPO_CACHE_DIR` using `GITHUB_TOKEN`.
 The cache is refreshed on each workflow run, and you can refresh it manually:
