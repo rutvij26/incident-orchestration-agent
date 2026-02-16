@@ -29,6 +29,7 @@ const ConfigSchema = z.object({
   EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   EMBEDDING_DIM: z.coerce.number().int().positive().default(1536),
   RAG_TOP_K: z.coerce.number().int().positive().default(6),
+  RAG_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.2),
   RAG_CHUNK_SIZE: z.coerce.number().int().positive().default(900),
   RAG_CHUNK_OVERLAP: z.coerce.number().int().nonnegative().default(150),
   RAG_REPO_PATH: z.string().optional(),
