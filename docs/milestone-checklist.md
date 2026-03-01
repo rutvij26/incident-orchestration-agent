@@ -10,8 +10,8 @@ Track implementation status for each prioritized milestone.
 
 ### Auto-fix Decision Scoring
 
-- [ ] Add fixability score using LLM confidence + heuristics.
-- [ ] Persist auto-fix attempts/outcomes to prevent repeated bad fixes.
+- [x] Add fixability score using LLM confidence + heuristics.
+- [x] Persist auto-fix attempts/outcomes to prevent repeated bad fixes.
 
 ### Prompt Architecture Hardening
 

@@ -30,6 +30,21 @@ export async function initMemory(): Promise<void> {
         embedding VECTOR(1536)
       )
     `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS auto_fix_attempts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        incident_id TEXT NOT NULL,
+        issue_number INTEGER NOT NULL,
+        outcome TEXT NOT NULL,
+        reason TEXT,
+        fixability_score NUMERIC(3,2),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_auto_fix_attempts_incident_issue
+      ON auto_fix_attempts (incident_id, issue_number)
+    `);
   } finally {
     client.release();
   }
@@ -66,6 +81,57 @@ export async function saveIncidents(incidents: Incident[]): Promise<void> {
         ]
       );
     }
+  } finally {
+    client.release();
+  }
+}
+
+export type AutoFixOutcome = "skipped" | "failed" | "pr_created";
+
+export async function recordAutoFixAttempt(params: {
+  incidentId: string;
+  issueNumber: number;
+  outcome: AutoFixOutcome;
+  reason?: string;
+  fixabilityScore?: number;
+}): Promise<void> {
+  const client = await getPool().connect();
+  try {
+    await client.query(
+      `INSERT INTO auto_fix_attempts (incident_id, issue_number, outcome, reason, fixability_score)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        params.incidentId,
+        params.issueNumber,
+        params.outcome,
+        params.reason ?? null,
+        params.fixabilityScore ?? null,
+      ]
+    );
+  } finally {
+    client.release();
+  }
+}
+
+export async function getRecentAutoFixAttempts(params: {
+  incidentId: string;
+  issueNumber: number;
+  limit?: number;
+}): Promise<Array<{ outcome: string; reason: string | null; created_at: Date }>> {
+  const client = await getPool().connect();
+  const limit = params.limit ?? 10;
+  try {
+    const result = await client.query(
+      `SELECT outcome, reason, created_at FROM auto_fix_attempts
+       WHERE incident_id = $1 AND issue_number = $2
+       ORDER BY created_at DESC LIMIT $3`,
+      [params.incidentId, params.issueNumber, limit]
+    );
+    return result.rows.map((r) => ({
+      outcome: r.outcome,
+      reason: r.reason,
+      created_at: r.created_at,
+    }));
   } finally {
     client.release();
   }

@@ -1,5 +1,6 @@
 import { proxyActivities } from "@temporalio/workflow";
 import type { WorkflowInput, WorkflowResult } from "../lib/types.js";
+import { severityRank } from "../lib/severity.js";
 
 const {
   fetchRecentLogs,
@@ -107,18 +108,4 @@ export async function incidentOrchestrationWorkflow(
   }
 
   return { incidents, issuesCreated };
-}
-
-function severityRank(severity: string): number {
-  switch (severity) {
-    case "critical":
-      return 4;
-    case "high":
-      return 3;
-    case "medium":
-      return 2;
-    case "low":
-    default:
-      return 1;
-  }
 }

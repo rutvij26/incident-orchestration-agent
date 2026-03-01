@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
-import { spawn } from "node:child_process";
 import { getConfig } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
 import { embedText } from "../lib/embeddings.js";
@@ -18,6 +17,7 @@ import {
 } from "../memory/repo.js";
 import { resolveRepoKey } from "../lib/repoTarget.js";
 import { getCachedRepoPath } from "./repoCache.js";
+import { execGit } from "../lib/git.js";
 
 const IGNORED_DIRS = new Set([
   ".git",
@@ -117,29 +117,6 @@ async function walkFiles(root: string): Promise<string[]> {
 
 function hashContent(content: string): string {
   return crypto.createHash("sha256").update(content).digest("hex");
-}
-
-async function execGit(
-  args: string[],
-  cwd: string
-): Promise<{ code: number; output: string }> {
-  return new Promise((resolve) => {
-    const child = spawn("git", args, {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let output = "";
-    child.stdout.on("data", (data) => {
-      output += data.toString();
-    });
-    child.stderr.on("data", (data) => {
-      output += data.toString();
-    });
-    child.on("close", (code) => resolve({ code: code ?? 1, output }));
-    child.on("error", (error) =>
-      resolve({ code: 1, output: String(error) })
-    );
-  });
 }
 
 async function getRepoHeadSha(repoPath: string): Promise<string | null> {
