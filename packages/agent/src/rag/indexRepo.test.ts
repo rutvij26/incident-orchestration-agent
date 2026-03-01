@@ -307,4 +307,56 @@ describe("indexRepository", () => {
     await indexRepository();
     expect(repoMem.deleteRepoChunksForPath).toHaveBeenCalled();
   });
+
+  it("scopes walk to RAG_REPO_SUBDIR and stores paths relative to repo root", async () => {
+    setupDefaultMocks();
+    const { getConfig } = await import("../lib/config.js");
+    vi.mocked(getConfig).mockReturnValue({
+      RAG_REPO_PATH: "/repo",
+      AUTO_FIX_REPO_PATH: undefined,
+      RAG_REPO_SUBDIR: "apps/demo-services",
+      RAG_CHUNK_SIZE: 100,
+      RAG_CHUNK_OVERLAP: 10,
+    } as any);
+
+    await indexRepository();
+
+    // Logger should announce the scoped subdirectory
+    const { logger } = await import("../lib/logger.js");
+    expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      "Repo indexing scoped to subdirectory",
+      { subdir: "apps/demo-services" }
+    );
+
+    // The chunk path must be relative to the repo root ("/repo"), not the subdir.
+    // walkRoot = "/repo/apps/demo-services", file = ".../index.ts"
+    // → relativePath = path.join("apps", "demo-services", "index.ts") (OS-agnostic)
+    const { join } = await import("node:path");
+    expect(repoMem.upsertRepoChunks).toHaveBeenCalled();
+    const chunks = vi.mocked(repoMem.upsertRepoChunks).mock.calls[0][0];
+    expect(chunks[0].path).toBe(join("apps", "demo-services", "index.ts"));
+  });
+
+  it("uses full repo root as walkRoot when RAG_REPO_SUBDIR is empty string", async () => {
+    setupDefaultMocks();
+    const { getConfig } = await import("../lib/config.js");
+    vi.mocked(getConfig).mockReturnValue({
+      RAG_REPO_PATH: "/repo",
+      AUTO_FIX_REPO_PATH: undefined,
+      RAG_REPO_SUBDIR: "  ",
+      RAG_CHUNK_SIZE: 100,
+      RAG_CHUNK_OVERLAP: 10,
+    } as any);
+
+    await indexRepository();
+
+    const { logger } = await import("../lib/logger.js");
+    // An all-whitespace subdir is treated as "not set" — no scoping log
+    expect(vi.mocked(logger.info)).not.toHaveBeenCalledWith(
+      "Repo indexing scoped to subdirectory",
+      expect.anything()
+    );
+    // Indexing still proceeds normally
+    expect(repoMem.upsertRepoChunks).toHaveBeenCalled();
+  });
 });

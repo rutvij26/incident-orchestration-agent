@@ -238,6 +238,22 @@ async function validateRewriteFiles(
   return { ok: true };
 }
 
+async function readCurrentFiles(
+  repoPath: string,
+  filePaths: string[],
+): Promise<Array<{ path: string; content: string }>> {
+  const results: Array<{ path: string; content: string }> = [];
+  for (const filePath of filePaths) {
+    try {
+      const content = await fs.readFile(path.join(repoPath, filePath), "utf8");
+      results.push({ path: filePath, content });
+    } catch {
+      // file not readable — skip; LLM will fall back to RAG context
+    }
+  }
+  return results;
+}
+
 function extractDiffFiles(diff: string): string[] {
   const files: string[] = [];
   const regex = /^diff --git a\/(.+?) b\/(.+)$/gm;
@@ -356,8 +372,7 @@ async function applyPatch(diff: string, repoPath: string): Promise<string> {
       return retry.output;
     }
 
-    // Last resort: LLM may have used the wrong file path (e.g. `src/index.ts`
-    // instead of `apps/demo-services/src/index.ts`). Try to remap and retry.
+    // Last resort: remap wrong paths (e.g. `src/index.ts` → tracked real path).
     const remapped = await remapDiffPaths(sanitized, repoPath);
     if (remapped) {
       await fs.writeFile(patchFile, remapped, "utf8");
@@ -365,9 +380,7 @@ async function applyPatch(diff: string, repoPath: string): Promise<string> {
         ["apply", "--whitespace=fix", patchFile],
         repoPath,
       );
-      if (remappedResult.code === 0) {
-        return remappedResult.output;
-      }
+      if (remappedResult.code === 0) return remappedResult.output;
     }
 
     throw new Error(`git apply failed: ${retry.output}`);
@@ -543,15 +556,35 @@ export async function autoFixIncident(
       );
     }
 
-    // Plan step: only useful when RAG surfaced context to ground file selection.
-    // With 0 chunks the LLM can't list files and Zod min(1) rejects the response.
-    const plan: FixPlan | null =
-      contextPayload.length > 0
-        ? await generateFixPlan({
-            incident: input.incident,
-            repoContext: contextPayload,
-          })
-        : null;
+    // Get the authoritative file list from the repo so every LLM prompt is
+    // grounded with real tracked paths.  The LLM is instructed to ONLY use
+    // paths from this list, which prevents it from inventing paths like
+    // `src/index.ts` when the real file is `apps/demo-services/src/index.ts`.
+    const SOURCE_EXTENSIONS = [
+      ".ts", ".tsx", ".mts", ".cts",
+      ".js", ".jsx", ".mjs", ".cjs",
+      ".py", ".go", ".java", ".rb", ".rs", ".cs",
+    ];
+    const lsResult = await execGit(["ls-files"], repoPath);
+    const trackedFiles = lsResult.code === 0
+      ? lsResult.output
+          .split("\n")
+          .map((f) => f.trim())
+          .filter((f) => f && SOURCE_EXTENSIONS.some((ext) => f.endsWith(ext)))
+          .slice(0, 300)
+      : [];
+    logger.info("Auto-fix tracked source files catalogued", {
+      incidentId: input.incident.id,
+      count: trackedFiles.length,
+    });
+
+    // Plan step: now that every prompt includes the full tracked file list,
+    // the LLM can select real paths even when RAG returned 0 chunks.
+    const plan: FixPlan | null = await generateFixPlan({
+      incident: input.incident,
+      repoContext: contextPayload,
+      trackedFiles,
+    });
     let patchContext = contextPayload;
     if (plan) {
       logger.info("Auto-fix plan generated", {
@@ -572,6 +605,7 @@ export async function autoFixIncident(
         repoContext: patchContext,
         strictDiff: true,
         plan: plan ?? undefined,
+        trackedFiles,
       });
 
     let proposal = await buildProposal();
@@ -612,6 +646,7 @@ export async function autoFixIncident(
 
     if (proposal) {
       setFromProposal(proposal);
+
       const status = validateDiff();
       if (status === "diff_too_large") {
         await createIssueComment(
@@ -659,9 +694,19 @@ export async function autoFixIncident(
     }
 
     if (!proposal) {
+      // Provide the LLM with the full current file contents so it can output
+      // a complete corrected version — prevents anchor-check failures caused by
+      // the LLM only seeing RAG chunks and inventing missing boilerplate.
+      const rewriteFilePaths = plan?.files.length
+        ? plan.files
+        : [...new Set(contextPayload.map((c) => c.path))];
+      const currentFiles = await readCurrentFiles(repoPath, rewriteFilePaths);
+
       rewrite = await generateFixRewrite({
         incident: input.incident,
         repoContext: contextPayload,
+        trackedFiles,
+        currentFiles,
       });
       if (!rewrite) {
         await commentInvalidDiff(input.issueNumber, diff || "No diff produced.");
@@ -678,6 +723,7 @@ export async function autoFixIncident(
         }
         return { status: "failed", reason: "invalid_diff" };
       }
+
       const rewriteCheck = await validateRewriteFiles(repoPath, rewrite.files);
       if (!rewriteCheck.ok) {
         await createIssueComment(
@@ -746,9 +792,17 @@ export async function autoFixIncident(
         incidentId: input.incident.id,
         error: String(error),
       });
+      // Re-read current files from the original repoPath (workDir may be partially modified).
+      const fallbackFilePaths = plan?.files.length
+        ? plan.files
+        : [...new Set(contextPayload.map((c) => c.path))];
+      const fallbackCurrentFiles = await readCurrentFiles(repoPath, fallbackFilePaths);
+
       rewrite = await generateFixRewrite({
         incident: input.incident,
         repoContext: contextPayload,
+        trackedFiles,
+        currentFiles: fallbackCurrentFiles,
       });
       if (!rewrite) {
         await createIssueComment(

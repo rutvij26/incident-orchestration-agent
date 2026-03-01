@@ -335,6 +335,21 @@ describe("generateFixProposal", () => {
     expect(result?.diff).toBeTruthy();
   });
 
+  it("uses trackedFiles in Available Files section when provided (covers line 275)", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp(validFixJson));
+    const { generateFixProposal } = await import("./llm.js");
+    await generateFixProposal({
+      ...fixInput,
+      trackedFiles: ["apps/demo-services/src/index.ts"],
+    });
+    const callArgs = mockChatCreate.mock.calls[0][0];
+    const fullPrompt = callArgs.messages
+      .map((m: { content: string }) => m.content)
+      .join("\n");
+    expect(fullPrompt).toContain("apps/demo-services/src/index.ts");
+  });
+
   it("includes plan section in prompt when plan is provided", async () => {
     mockGetConfig.mockReturnValue(openaiConfig);
     mockChatCreate.mockResolvedValue(openaiResp(validFixJson));
@@ -391,6 +406,16 @@ describe("generateFixProposal", () => {
     const { generateFixProposal } = await import("./llm.js");
     expect(await generateFixProposal(fixInput)).toBeNull();
   });
+
+  it("uses '(none available)' when both trackedFiles and repoContext are empty (covers line 280)", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp(validFixJson));
+    const { generateFixProposal } = await import("./llm.js");
+    await generateFixProposal({ incident: sampleIncident, repoContext: [], trackedFiles: [] });
+    const callArgs = mockChatCreate.mock.calls[0][0];
+    const fullPrompt = callArgs.messages.map((m: { content: string }) => m.content).join("\n");
+    expect(fullPrompt).toContain("(none available)");
+  });
 });
 
 // ─── generateFixRewrite ───────────────────────────────────────────────────────
@@ -405,6 +430,63 @@ describe("generateFixRewrite", () => {
     const result = await generateFixRewrite(fixInput);
     expect(result?.files).toHaveLength(1);
     expect(result?.files[0].path).toBe("src/index.ts");
+  });
+
+  it("uses trackedFiles in Available Files section when provided (covers line 323)", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp(validFixRewriteJson));
+    const { generateFixRewrite } = await import("./llm.js");
+    await generateFixRewrite({
+      ...fixInput,
+      trackedFiles: ["apps/demo-services/src/index.ts"],
+    });
+    const callArgs = mockChatCreate.mock.calls[0][0];
+    const fullPrompt = callArgs.messages
+      .map((m: { content: string }) => m.content)
+      .join("\n");
+    expect(fullPrompt).toContain("apps/demo-services/src/index.ts");
+  });
+
+  it("uses currentFiles section when provided and omits Repo context snippets", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp(validFixRewriteJson));
+    const { generateFixRewrite } = await import("./llm.js");
+    await generateFixRewrite({
+      ...fixInput,
+      currentFiles: [
+        { path: "apps/demo-services/src/index.ts", content: 'import express from "express";\nconst app = express();\n' },
+      ],
+    });
+    const callArgs = mockChatCreate.mock.calls[0][0];
+    const fullPrompt = callArgs.messages
+      .map((m: { content: string }) => m.content)
+      .join("\n");
+    expect(fullPrompt).toContain("Current file contents");
+    expect(fullPrompt).toContain("apps/demo-services/src/index.ts");
+    expect(fullPrompt).not.toContain("Repo context snippets");
+  });
+
+  it("falls back to Repo context snippets when currentFiles is empty", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp(validFixRewriteJson));
+    const { generateFixRewrite } = await import("./llm.js");
+    await generateFixRewrite({ ...fixInput, currentFiles: [] });
+    const callArgs = mockChatCreate.mock.calls[0][0];
+    const fullPrompt = callArgs.messages
+      .map((m: { content: string }) => m.content)
+      .join("\n");
+    expect(fullPrompt).toContain("Repo context snippets");
+    expect(fullPrompt).not.toContain("Current file contents");
+  });
+
+  it("uses '(none available)' when both trackedFiles and repoContext are empty (covers line 347)", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp(validFixRewriteJson));
+    const { generateFixRewrite } = await import("./llm.js");
+    await generateFixRewrite({ incident: sampleIncident, repoContext: [], trackedFiles: [], currentFiles: [] });
+    const callArgs = mockChatCreate.mock.calls[0][0];
+    const fullPrompt = callArgs.messages.map((m: { content: string }) => m.content).join("\n");
+    expect(fullPrompt).toContain("(none available)");
   });
 
   it("returns FixRewrite via Anthropic", async () => {
@@ -521,6 +603,33 @@ describe("generateFixPlan", () => {
     mockMessagesCreate.mockResolvedValue({ content: [] });
     const { generateFixPlan } = await import("./llm.js");
     expect(await generateFixPlan(planInput)).toBeNull();
+  });
+
+  it("uses '(none available)' placeholder in prompt when repoContext is empty (covers line 498)", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp(validFixPlanJson));
+    const { generateFixPlan } = await import("./llm.js");
+    await generateFixPlan({ ...planInput, repoContext: [] });
+    const callArgs = mockChatCreate.mock.calls[0][0];
+    const fullPrompt = callArgs.messages
+      .map((m: { content: string }) => m.content)
+      .join("\n");
+    expect(fullPrompt).toContain("(none available)");
+  });
+
+  it("uses trackedFiles in Available Files section when provided (covers line 483)", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp(validFixPlanJson));
+    const { generateFixPlan } = await import("./llm.js");
+    await generateFixPlan({
+      ...planInput,
+      trackedFiles: ["apps/demo-services/src/index.ts"],
+    });
+    const callArgs = mockChatCreate.mock.calls[0][0];
+    const fullPrompt = callArgs.messages
+      .map((m: { content: string }) => m.content)
+      .join("\n");
+    expect(fullPrompt).toContain("apps/demo-services/src/index.ts");
   });
 });
 

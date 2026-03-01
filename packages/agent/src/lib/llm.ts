@@ -249,6 +249,7 @@ function buildFixPrompt(input: {
   repoContext: Array<{ path: string; content: string }>;
   strictDiff?: boolean;
   plan?: FixPlan;
+  trackedFiles?: string[];
 }): string {
   const strictRules = input.strictDiff
     ? [
@@ -268,6 +269,16 @@ function buildFixPrompt(input: {
         "Use exact lines from the Repo context snippets as unified diff context lines.",
       ]
     : [];
+  // trackedFiles (from git ls-files) is the authoritative path source.
+  // Fall back to RAG-returned paths only when trackedFiles is not provided.
+  const fileList = input.trackedFiles?.length
+    ? input.trackedFiles.map((p) => `  - ${p}`).join("\n")
+    : input.repoContext.map((c) => `  - ${c.path}`).join("\n");
+  const availableFilesSection = [
+    "",
+    "Available Files (your diff MUST only reference paths from this list):",
+    fileList || "  (none available)",
+  ];
   return [
     "You are a senior engineer fixing a production incident.",
     "Generate a minimal, safe code patch using the provided repo context.",
@@ -284,22 +295,10 @@ function buildFixPrompt(input: {
     "- The diff must be a valid unified diff that applies cleanly.",
     "- Keep the change minimal and focused on the incident.",
     "- Do not modify secrets or environment files.",
+    "- diff paths MUST come from the Available Files list below — do NOT invent paths.",
     ...strictRules,
     ...planSection,
-    "",
-    "Incident:",
-    JSON.stringify(
-      {
-        title: input.incident.title,
-        severity: input.incident.severity,
-        count: input.incident.count,
-        firstSeen: input.incident.firstSeen,
-        lastSeen: input.incident.lastSeen,
-        evidence: input.incident.evidence,
-      },
-      null,
-      2,
-    ),
+    ...availableFilesSection,
     "",
     "Repo context snippets:",
     JSON.stringify(
@@ -316,8 +315,15 @@ function buildFixPrompt(input: {
 function buildFixRewritePrompt(input: {
   incident: Incident;
   repoContext: Array<{ path: string; content: string }>;
+  trackedFiles?: string[];
+  currentFiles?: Array<{ path: string; content: string }>;
 }): string {
-  return [
+  // trackedFiles (from git ls-files) is the authoritative path source.
+  // Fall back to RAG-returned paths only when trackedFiles is not provided.
+  const fileList = input.trackedFiles?.length
+    ? input.trackedFiles.map((p) => `  - ${p}`).join("\n")
+    : input.repoContext.map((c) => `  - ${c.path}`).join("\n");
+  const parts = [
     "You are a senior engineer fixing a production incident.",
     "Generate a minimal, safe change by returning full updated file contents.",
     "Return JSON only with this exact schema:",
@@ -331,9 +337,14 @@ function buildFixRewritePrompt(input: {
     "Rules:",
     "- Output valid JSON only (no markdown).",
     "- Only include files you are changing.",
-    "- Provide full file content for each file in `files`.",
+    "- Provide the COMPLETE corrected file content for each file in `files` — do NOT truncate.",
+    "- Preserve all imports, structure, and logic outside the buggy section.",
     "- Keep the change minimal and focused on the incident.",
     "- Do not modify secrets or environment files.",
+    "- file paths MUST come from the Available Files list below — do NOT invent paths.",
+    "",
+    "Available Files (your files array MUST only reference paths from this list):",
+    fileList || "  (none available)",
     "",
     "Incident:",
     JSON.stringify(
@@ -348,17 +359,30 @@ function buildFixRewritePrompt(input: {
       null,
       2
     ),
-    "",
-    "Repo context snippets:",
-    JSON.stringify(
-      input.repoContext.map((item) => ({
-        path: item.path,
-        content: item.content,
-      })),
-      null,
-      2
-    ),
-  ].join("\n");
+  ];
+
+  if (input.currentFiles?.length) {
+    parts.push(
+      "",
+      "Current file contents (output a corrected version of each file below — keep ALL unchanged lines):",
+      JSON.stringify(input.currentFiles, null, 2)
+    );
+  } else {
+    parts.push(
+      "",
+      "Repo context snippets:",
+      JSON.stringify(
+        input.repoContext.map((item) => ({
+          path: item.path,
+          content: item.content,
+        })),
+        null,
+        2
+      )
+    );
+  }
+
+  return parts.join("\n");
 }
 
 function buildFixabilityPrompt(input: {
@@ -422,6 +446,7 @@ export async function generateFixProposal(input: {
   repoContext: Array<{ path: string; content: string }>;
   strictDiff?: boolean;
   plan?: FixPlan;
+  trackedFiles?: string[];
 }): Promise<FixProposal | null> {
   const resolved = resolvedProvider();
   if (!resolved) {
@@ -443,6 +468,8 @@ export async function generateFixProposal(input: {
 export async function generateFixRewrite(input: {
   incident: Incident;
   repoContext: Array<{ path: string; content: string }>;
+  trackedFiles?: string[];
+  currentFiles?: Array<{ path: string; content: string }>;
 }): Promise<FixRewrite | null> {
   const resolved = resolvedProvider();
   if (!resolved) {
@@ -451,7 +478,8 @@ export async function generateFixRewrite(input: {
   }
   try {
     const raw = await callLlm(buildFixRewritePrompt(input), resolved, {
-      maxTokens: 2048,
+      // Higher token budget: the LLM must output the complete corrected file(s).
+      maxTokens: 4096,
       temperature: 0.2,
     });
     return FixRewriteSchema.parse(JSON.parse(extractJson(raw)));
@@ -464,10 +492,14 @@ export async function generateFixRewrite(input: {
 function buildFixPlanPrompt(input: {
   incident: Incident;
   repoContext: Array<{ path: string; content: string }>;
+  trackedFiles?: string[];
 }): string {
-  const availableFiles = input.repoContext
-    .map((c) => `  - ${c.path}`)
-    .join("\n");
+  // trackedFiles (from git ls-files) is the authoritative path source.
+  // Fall back to RAG-returned paths only when trackedFiles is not provided.
+  const fileList = input.trackedFiles?.length
+    ? input.trackedFiles.map((p) => `  - ${p}`).join("\n")
+    : input.repoContext.map((c) => `  - ${c.path}`).join("\n");
+  const availableFiles = fileList;
   return [
     "You are a senior engineer planning a targeted code fix for a production incident.",
     "Identify which files to modify and describe the specific change needed.",
@@ -556,6 +588,7 @@ function buildFixVerifyPrompt(input: {
 export async function generateFixPlan(input: {
   incident: Incident;
   repoContext: Array<{ path: string; content: string }>;
+  trackedFiles?: string[];
 }): Promise<FixPlan | null> {
   const resolved = resolvedProvider();
   if (!resolved) return null;
