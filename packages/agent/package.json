@@ -13,6 +13,7 @@
     "healthcheck": "tsx src/healthcheck.ts",
     "test:health": "tsx src/healthcheck.ts",
     "test": "vitest run --reporter=basic",
+    "test:coverage": "vitest run --reporter=basic --coverage",
     "test:watch": "vitest",
     "rag:index": "tsx src/rag/indexRepo.ts",
     "rag:refresh": "tsx src/rag/refreshRepo.ts"
@@ -37,6 +38,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.7.5",
+    "@vitest/coverage-v8": "^2.1.9",
     "tsx": "^4.16.2",
     "typescript": "^5.5.4",
     "vitest": "^2.1.9"

@@ -183,6 +183,7 @@ export async function summarizeIncident(
       raw = block?.text ?? "";
     } else {
       if (!geminiClient) {
+        /* v8 ignore next - GEMINI_API_KEY is always set when Gemini provider is active */
         geminiClient = new GoogleGenerativeAI(config.GEMINI_API_KEY ?? "");
       }
       const model = geminiClient.getGenerativeModel({ model: resolved.model });
@@ -403,6 +404,7 @@ export async function assessFixability(input: {
       raw = block?.text ?? "";
     } else {
       if (!geminiClient) {
+        /* v8 ignore next - GEMINI_API_KEY is always set when Gemini provider is active */
         geminiClient = new GoogleGenerativeAI(config.GEMINI_API_KEY ?? "");
       }
       const model = geminiClient.getGenerativeModel({ model: resolved.model });
@@ -467,6 +469,7 @@ export async function generateFixProposal(input: {
       raw = block?.text ?? "";
     } else {
       if (!geminiClient) {
+        /* v8 ignore next - GEMINI_API_KEY is always set when Gemini provider is active */
         geminiClient = new GoogleGenerativeAI(config.GEMINI_API_KEY ?? "");
       }
       const model = geminiClient.getGenerativeModel({ model: resolved.model });
@@ -530,6 +533,7 @@ export async function generateFixRewrite(input: {
       raw = block?.text ?? "";
     } else {
       if (!geminiClient) {
+        /* v8 ignore next - GEMINI_API_KEY is always set when Gemini provider is active */
         geminiClient = new GoogleGenerativeAI(config.GEMINI_API_KEY ?? "");
       }
       const model = geminiClient.getGenerativeModel({ model: resolved.model });

@@ -19,7 +19,8 @@
     "rag:refresh": "npm --workspace @agentic/agent run rag:refresh",
     "healthcheck": "npm --workspace @agentic/agent run healthcheck",
     "test:health": "npm --workspace @agentic/agent run test:health",
-    "test": "npm --workspace @agentic/agent run test"
+    "test": "npm --workspace @agentic/agent run test",
+    "test:coverage": "npm --workspace @agentic/agent run test:coverage"
   },
   "keywords": [
     "agentic-ai",
