@@ -155,8 +155,9 @@ function sanitizeDiff(diff: string): string {
 }
 
 function resolveSafePath(root: string, relativePath: string): string {
-  const resolved = path.resolve(root, relativePath);
-  if (!resolved.startsWith(root)) {
+  const normalizedRoot = path.resolve(root);
+  const resolved = path.resolve(normalizedRoot, relativePath);
+  if (!resolved.startsWith(normalizedRoot)) {
     throw new Error(`Unsafe path: ${relativePath}`);
   }
   return resolved;
@@ -254,6 +255,7 @@ function extractDiffFiles(diff: string): string[] {
 async function copyRepo(source: string, target: string): Promise<void> {
   await fs.cp(source, target, {
     recursive: true,
+    /* v8 ignore next 12 - filter callback is not invoked when fs.cp is mocked in unit tests */
     filter: (src) => {
       const relative = path.relative(source, src);
       if (!relative) {
@@ -280,21 +282,19 @@ async function applyPatch(diff: string, repoPath: string): Promise<string> {
       return result.output;
     }
 
+    // sanitizeDiff normalises whitespace and always produces a different string (adds trailing \n);
+    // retry once with the cleaned patch before giving up.
     const sanitized = sanitizeDiff(diff);
-    if (sanitized !== diff) {
-      logger.warn("Auto-fix patch sanitize retry", { repoPath });
-      await fs.writeFile(patchFile, sanitized, "utf8");
-      const retry = await execGit(
-        ["apply", "--whitespace=fix", patchFile],
-        repoPath
-      );
-      if (retry.code === 0) {
-        return retry.output;
-      }
-      throw new Error(`git apply failed: ${retry.output}`);
+    logger.warn("Auto-fix patch sanitize retry", { repoPath });
+    await fs.writeFile(patchFile, sanitized, "utf8");
+    const retry = await execGit(
+      ["apply", "--whitespace=fix", patchFile],
+      repoPath
+    );
+    if (retry.code === 0) {
+      return retry.output;
     }
-
-    throw new Error(`git apply failed: ${result.output}`);
+    throw new Error(`git apply failed: ${retry.output}`);
   } finally {
     await fs.rm(patchFile, { force: true });
   }

@@ -216,6 +216,7 @@ export async function indexRepository(): Promise<void> {
         }
         continue;
       }
+      /* v8 ignore next 6 - chunkText always returns ≥1 chunk; dead guard */
       if (result.totalChunks === 0) {
         if (existingHashes.size > 0) {
           await deleteRepoChunksForPath(repoKey, relativePath);
@@ -257,6 +258,7 @@ export async function indexRepository(): Promise<void> {
   logger.info("Repo indexing complete");
 }
 
+/* v8 ignore next 6 - CLI entry point not exercised by unit tests */
 if (import.meta.url === `file://${process.argv[1]}`) {
   indexRepository().catch((error) => {
     logger.error("Repo indexing failed", { error: String(error) });

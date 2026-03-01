@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+
 export type SandboxCommand = {
   image: string;
   command: string[];
@@ -11,7 +13,6 @@ export type SandboxCommand = {
 export async function runInSandbox(
   command: SandboxCommand,
 ): Promise<{ exitCode: number; output: string }> {
-  const { spawn } = await import("node:child_process");
 
   const args: string[] = ["run", "--rm", "--network", "none"];
   if (command.workdir) {

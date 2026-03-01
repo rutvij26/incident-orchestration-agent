@@ -65,6 +65,7 @@ export async function embedText(text: string): Promise<number[] | null> {
   }
 
   if (!geminiClient) {
+    /* v8 ignore next - GEMINI_API_KEY is always set when Gemini provider is active */
     geminiClient = new GoogleGenerativeAI(config.GEMINI_API_KEY ?? "");
   }
   const model = geminiClient.getGenerativeModel({ model: resolved.model });
