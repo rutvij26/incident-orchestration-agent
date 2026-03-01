@@ -5,9 +5,12 @@ import { logger } from "../lib/logger.js";
 import type { Incident, IncidentSummary } from "../lib/types.js";
 import {
   assessFixability,
+  generateFixPlan,
   generateFixProposal,
   generateFixRewrite,
+  verifyFixPatch,
 } from "../lib/llm.js";
+import type { FixPlan } from "../lib/llm.js";
 import { retrieveRepoContext } from "../rag/retrieveRepo.js";
 import { runInSandbox } from "../tools/dockerSandbox.js";
 import { createIssueComment, createPullRequest } from "../lib/github.js";
@@ -270,6 +273,64 @@ async function copyRepo(source: string, target: string): Promise<void> {
   });
 }
 
+/**
+ * When the LLM has no repo context it guesses short relative paths like
+ * `src/index.ts` instead of the monorepo path `apps/demo-services/src/index.ts`.
+ * This function uses `git ls-files` to find the real path for any path in the
+ * diff that doesn't exist in the working tree, then rewrites the diff.
+ * Returns the remapped diff, or null when nothing needed remapping.
+ */
+async function remapDiffPaths(
+  diff: string,
+  repoPath: string,
+): Promise<string | null> {
+  const diffPaths = extractDiffFiles(diff);
+  if (diffPaths.length === 0) return null;
+
+  const lsResult = await execGit(["ls-files"], repoPath);
+  if (lsResult.code !== 0) return null;
+  const trackedFiles = lsResult.output.trim().split("\n").filter(Boolean);
+
+  const remapped = new Map<string, string>();
+  for (const diffPath of diffPaths) {
+    const normalised = diffPath.replace(/\\/g, "/");
+    try {
+      await fs.access(path.join(repoPath, normalised));
+      continue; // path exists as-is, no remap needed
+    } catch {
+      // fall through to search
+    }
+    const basename = path.basename(normalised);
+    const candidates = trackedFiles.filter(
+      (f) => f === normalised || f.endsWith(`/${basename}`),
+    );
+    if (candidates.length === 1) {
+      remapped.set(normalised, candidates[0]);
+    } else if (candidates.length > 1) {
+      // Prefer a candidate that ends with the same relative suffix
+      const best =
+        candidates.find((c) => c.endsWith(normalised)) ?? candidates[0];
+      remapped.set(normalised, best);
+    }
+  }
+  if (remapped.size === 0) return null;
+
+  let patched = diff;
+  for (const [oldPath, newPath] of remapped) {
+    patched = patched
+      .replace(new RegExp(`a/${escapeRegex(oldPath)}`, "g"), `a/${newPath}`)
+      .replace(new RegExp(`b/${escapeRegex(oldPath)}`, "g"), `b/${newPath}`);
+  }
+  logger.info("Auto-fix diff paths remapped", {
+    remapped: Object.fromEntries(remapped),
+  });
+  return patched;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function applyPatch(diff: string, repoPath: string): Promise<string> {
   const patchFile = path.join(repoPath, ".agentic.patch");
   try {
@@ -294,6 +355,21 @@ async function applyPatch(diff: string, repoPath: string): Promise<string> {
     if (retry.code === 0) {
       return retry.output;
     }
+
+    // Last resort: LLM may have used the wrong file path (e.g. `src/index.ts`
+    // instead of `apps/demo-services/src/index.ts`). Try to remap and retry.
+    const remapped = await remapDiffPaths(sanitized, repoPath);
+    if (remapped) {
+      await fs.writeFile(patchFile, remapped, "utf8");
+      const remappedResult = await execGit(
+        ["apply", "--whitespace=fix", patchFile],
+        repoPath,
+      );
+      if (remappedResult.code === 0) {
+        return remappedResult.output;
+      }
+    }
+
     throw new Error(`git apply failed: ${retry.output}`);
   } finally {
     await fs.rm(patchFile, { force: true });
@@ -460,11 +536,42 @@ export async function autoFixIncident(
     }
     recordedFixabilityScore = fixabilityScore;
 
+    if (contextPayload.length === 0) {
+      logger.warn(
+        "Auto-fix proceeding without repo context — RAG returned no chunks; fix quality will be degraded",
+        { incidentId: input.incident.id },
+      );
+    }
+
+    // Plan step: only useful when RAG surfaced context to ground file selection.
+    // With 0 chunks the LLM can't list files and Zod min(1) rejects the response.
+    const plan: FixPlan | null =
+      contextPayload.length > 0
+        ? await generateFixPlan({
+            incident: input.incident,
+            repoContext: contextPayload,
+          })
+        : null;
+    let patchContext = contextPayload;
+    if (plan) {
+      logger.info("Auto-fix plan generated", {
+        incidentId: input.incident.id,
+        planFiles: plan.files,
+        approach: plan.approach,
+      });
+      const planFileSet = new Set(plan.files);
+      const filtered = contextPayload.filter((c) => planFileSet.has(c.path));
+      if (filtered.length > 0) {
+        patchContext = filtered;
+      }
+    }
+
     const buildProposal = async () =>
       generateFixProposal({
         incident: input.incident,
-        repoContext: contextPayload,
+        repoContext: patchContext,
         strictDiff: true,
+        plan: plan ?? undefined,
       });
 
     let proposal = await buildProposal();
@@ -526,6 +633,28 @@ export async function autoFixIncident(
       }
       if (status === "invalid_diff") {
         proposal = null;
+      } else if (plan) {
+        // Verify step: check the generated patch aligns with the plan
+        const verification = await verifyFixPatch({
+          incident: input.incident,
+          plan,
+          diff,
+        });
+        if (verification) {
+          logger.info("Auto-fix patch verification result", {
+            incidentId: input.incident.id,
+            valid: verification.valid,
+            confidence: verification.confidence,
+            verdict: verification.verdict,
+          });
+          if (!verification.valid && verification.confidence >= 0.7) {
+            logger.warn("Auto-fix patch rejected by verification", {
+              incidentId: input.incident.id,
+              issues: verification.issues,
+            });
+            proposal = null;
+          }
+        }
       }
     }
 

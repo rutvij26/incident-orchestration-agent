@@ -335,6 +335,20 @@ describe("generateFixProposal", () => {
     expect(result?.diff).toBeTruthy();
   });
 
+  it("includes plan section in prompt when plan is provided", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp(validFixJson));
+    const { generateFixProposal } = await import("./llm.js");
+    const plan = { files: ["src/index.ts"], approach: "Fix timeout", reasoning: "Too low" };
+    const result = await generateFixProposal({ ...fixInput, plan });
+    expect(result?.summary).toBe("Fix null check");
+    // Verify plan was injected — mockChatCreate should have been called with the plan content
+    const calledWith = mockChatCreate.mock.calls[0][0];
+    const userMessage = calledWith.messages.find((m: { role: string }) => m.role === "user");
+    expect(userMessage.content).toContain("Fix Plan");
+    expect(userMessage.content).toContain("src/index.ts");
+  });
+
   it("returns FixProposal via Anthropic", async () => {
     mockGetConfig.mockReturnValue(anthropicConfig);
     mockMessagesCreate.mockResolvedValue(anthropicResp(validFixJson));
@@ -434,5 +448,178 @@ describe("generateFixRewrite", () => {
     mockMessagesCreate.mockResolvedValue({ content: [] });
     const { generateFixRewrite } = await import("./llm.js");
     expect(await generateFixRewrite(fixInput)).toBeNull();
+  });
+});
+
+// ─── generateFixPlan ──────────────────────────────────────────────────────────
+
+describe("generateFixPlan", () => {
+  const planInput = { incident: sampleIncident, repoContext };
+
+  const validFixPlanJson = JSON.stringify({
+    files: ["src/index.ts"],
+    approach: "Increase the timeout constant",
+    reasoning: "Low timeout causes failures under load",
+  });
+
+  it("returns FixPlan via OpenAI", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp(validFixPlanJson));
+    const { generateFixPlan } = await import("./llm.js");
+    const result = await generateFixPlan(planInput);
+    expect(result?.files).toEqual(["src/index.ts"]);
+    expect(result?.approach).toBe("Increase the timeout constant");
+  });
+
+  it("returns FixPlan via Anthropic", async () => {
+    mockGetConfig.mockReturnValue(anthropicConfig);
+    mockMessagesCreate.mockResolvedValue(anthropicResp(validFixPlanJson));
+    const { generateFixPlan } = await import("./llm.js");
+    const result = await generateFixPlan(planInput);
+    expect(result?.reasoning).toBe("Low timeout causes failures under load");
+  });
+
+  it("returns FixPlan via Gemini", async () => {
+    mockGetConfig.mockReturnValue(geminiConfig);
+    mockGenerateContent.mockResolvedValue(geminiResp(validFixPlanJson));
+    const { generateFixPlan } = await import("./llm.js");
+    const result = await generateFixPlan(planInput);
+    expect(result?.files).toEqual(["src/index.ts"]);
+  });
+
+  it("returns null when no provider configured", async () => {
+    mockGetConfig.mockReturnValue(noProviderConfig);
+    const { generateFixPlan } = await import("./llm.js");
+    expect(await generateFixPlan(planInput)).toBeNull();
+  });
+
+  it("returns null on schema parse error (empty files array)", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(
+      openaiResp(JSON.stringify({ files: [], approach: "x", reasoning: "y" })),
+    );
+    const { generateFixPlan } = await import("./llm.js");
+    expect(await generateFixPlan(planInput)).toBeNull();
+  });
+
+  it("returns null when OpenAI returns invalid JSON", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp("not json at all"));
+    const { generateFixPlan } = await import("./llm.js");
+    expect(await generateFixPlan(planInput)).toBeNull();
+  });
+
+  it("returns null when OpenAI returns null message content", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue({ choices: [{ message: { content: null } }] });
+    const { generateFixPlan } = await import("./llm.js");
+    expect(await generateFixPlan(planInput)).toBeNull();
+  });
+
+  it("returns null when Anthropic returns no text block", async () => {
+    mockGetConfig.mockReturnValue(anthropicConfig);
+    mockMessagesCreate.mockResolvedValue({ content: [] });
+    const { generateFixPlan } = await import("./llm.js");
+    expect(await generateFixPlan(planInput)).toBeNull();
+  });
+});
+
+// ─── verifyFixPatch ───────────────────────────────────────────────────────────
+
+describe("verifyFixPatch", () => {
+  const plan = {
+    files: ["src/index.ts"],
+    approach: "Fix the timeout",
+    reasoning: "Too low",
+  };
+  const sampleDiff =
+    "diff --git a/src/index.ts b/src/index.ts\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1 +1 @@\n-x\n+y";
+
+  const validFixVerifyJson = JSON.stringify({
+    valid: true,
+    confidence: 0.9,
+    issues: [],
+    verdict: "Patch correctly implements the plan",
+  });
+
+  it("returns FixVerify via OpenAI", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp(validFixVerifyJson));
+    const { verifyFixPatch } = await import("./llm.js");
+    const result = await verifyFixPatch({ incident: sampleIncident, plan, diff: sampleDiff });
+    expect(result?.valid).toBe(true);
+    expect(result?.confidence).toBe(0.9);
+    expect(result?.issues).toEqual([]);
+    expect(result?.verdict).toBe("Patch correctly implements the plan");
+  });
+
+  it("returns rejection result via Anthropic", async () => {
+    mockGetConfig.mockReturnValue(anthropicConfig);
+    mockMessagesCreate.mockResolvedValue(
+      anthropicResp(
+        JSON.stringify({
+          valid: false,
+          confidence: 0.85,
+          issues: ["Modifies wrong file"],
+          verdict: "Patch does not match plan",
+        }),
+      ),
+    );
+    const { verifyFixPatch } = await import("./llm.js");
+    const result = await verifyFixPatch({ incident: sampleIncident, plan, diff: sampleDiff });
+    expect(result?.valid).toBe(false);
+    expect(result?.issues).toEqual(["Modifies wrong file"]);
+  });
+
+  it("returns FixVerify via Gemini", async () => {
+    mockGetConfig.mockReturnValue(geminiConfig);
+    mockGenerateContent.mockResolvedValue(geminiResp(validFixVerifyJson));
+    const { verifyFixPatch } = await import("./llm.js");
+    const result = await verifyFixPatch({ incident: sampleIncident, plan, diff: sampleDiff });
+    expect(result?.verdict).toBe("Patch correctly implements the plan");
+  });
+
+  it("truncates long diffs in the prompt (>4000 chars)", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp(validFixVerifyJson));
+    const { verifyFixPatch } = await import("./llm.js");
+    const longDiff = "x".repeat(5000);
+    const result = await verifyFixPatch({ incident: sampleIncident, plan, diff: longDiff });
+    expect(result?.valid).toBe(true);
+  });
+
+  it("returns null when no provider configured", async () => {
+    mockGetConfig.mockReturnValue(noProviderConfig);
+    const { verifyFixPatch } = await import("./llm.js");
+    expect(
+      await verifyFixPatch({ incident: sampleIncident, plan, diff: sampleDiff }),
+    ).toBeNull();
+  });
+
+  it("returns null on schema parse error", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue(openaiResp('{"valid": "not-a-bool"}'));
+    const { verifyFixPatch } = await import("./llm.js");
+    expect(
+      await verifyFixPatch({ incident: sampleIncident, plan, diff: sampleDiff }),
+    ).toBeNull();
+  });
+
+  it("returns null when OpenAI returns null message content", async () => {
+    mockGetConfig.mockReturnValue(openaiConfig);
+    mockChatCreate.mockResolvedValue({ choices: [{ message: { content: null } }] });
+    const { verifyFixPatch } = await import("./llm.js");
+    expect(
+      await verifyFixPatch({ incident: sampleIncident, plan, diff: sampleDiff }),
+    ).toBeNull();
+  });
+
+  it("returns null when Anthropic returns no text block", async () => {
+    mockGetConfig.mockReturnValue(anthropicConfig);
+    mockMessagesCreate.mockResolvedValue({ content: [] });
+    const { verifyFixPatch } = await import("./llm.js");
+    expect(
+      await verifyFixPatch({ incident: sampleIncident, plan, diff: sampleDiff }),
+    ).toBeNull();
   });
 });

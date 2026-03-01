@@ -43,7 +43,22 @@ const FixabilitySchema = z.object({
   reason: z.string().min(1),
 });
 
+const FixPlanSchema = z.object({
+  files: z.array(z.string().min(1)).min(1),
+  approach: z.string().min(1),
+  reasoning: z.string().min(1),
+});
+
+const FixVerifySchema = z.object({
+  valid: z.boolean(),
+  confidence: z.number().min(0).max(1),
+  issues: z.array(z.string()).default([]),
+  verdict: z.string().min(1),
+});
+
 export type FixabilityAssessment = z.infer<typeof FixabilitySchema>;
+export type FixPlan = z.infer<typeof FixPlanSchema>;
+export type FixVerify = z.infer<typeof FixVerifySchema>;
 
 let openaiClient: OpenAI | null = null;
 let anthropicClient: Anthropic | null = null;
@@ -136,63 +151,79 @@ function resolveProvider(
   return null;
 }
 
-export async function summarizeIncident(
-  incident: Incident,
-): Promise<IncidentSummary | null> {
+/**
+ * Dispatches a prompt to whichever LLM provider `resolveProvider` selected
+ * and returns the raw text response. All exported LLM functions share this
+ * single dispatch path — only the prompt, token budget, and temperature differ.
+ */
+async function callLlm(
+  prompt: string,
+  resolved: { provider: "openai" | "anthropic" | "gemini"; model: string },
+  opts: { maxTokens: number; temperature: number },
+): Promise<string> {
   const config = getConfig();
-  const resolved = resolveProvider(
+  if (resolved.provider === "openai") {
+    if (!openaiClient) {
+      openaiClient = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+    }
+    const response = await openaiClient.chat.completions.create({
+      model: resolved.model,
+      temperature: opts.temperature,
+      max_tokens: opts.maxTokens,
+      messages: [
+        { role: "system", content: "Return JSON only." },
+        { role: "user", content: prompt },
+      ],
+    });
+    return response.choices[0]?.message?.content ?? "";
+  }
+  if (resolved.provider === "anthropic") {
+    if (!anthropicClient) {
+      anthropicClient = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+    }
+    const response = await anthropicClient.messages.create({
+      model: resolved.model,
+      max_tokens: opts.maxTokens,
+      temperature: opts.temperature,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const block = response.content.find((item) => item.type === "text");
+    return block?.text ?? "";
+  }
+  // gemini
+  if (!geminiClient) {
+    /* v8 ignore next */
+    geminiClient = new GoogleGenerativeAI(config.GEMINI_API_KEY ?? "");
+  }
+  const model = geminiClient.getGenerativeModel({ model: resolved.model });
+  const response = await model.generateContent(prompt);
+  return response.response.text();
+}
+
+function resolvedProvider() {
+  const config = getConfig();
+  return resolveProvider(
     config.LLM_PROVIDER,
     config.OPENAI_API_KEY,
     config.ANTHROPIC_API_KEY,
     config.GEMINI_API_KEY,
   );
+}
 
+export async function summarizeIncident(
+  incident: Incident,
+): Promise<IncidentSummary | null> {
+  const resolved = resolvedProvider();
   if (!resolved) {
     logger.info("LLM summary skipped (no provider/api key configured)");
     return null;
   }
-
   try {
-    const prompt = buildPrompt(incident);
-    let raw = "";
-
-    if (resolved.provider === "openai") {
-      if (!openaiClient) {
-        openaiClient = new OpenAI({ apiKey: config.OPENAI_API_KEY });
-      }
-      const response = await openaiClient.chat.completions.create({
-        model: resolved.model,
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: "Return JSON only." },
-          { role: "user", content: prompt },
-        ],
-      });
-      raw = response.choices[0]?.message?.content ?? "";
-    } else if (resolved.provider === "anthropic") {
-      if (!anthropicClient) {
-        anthropicClient = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
-      }
-      const response = await anthropicClient.messages.create({
-        model: resolved.model,
-        max_tokens: 512,
-        temperature: 0.2,
-        messages: [{ role: "user", content: prompt }],
-      });
-      const block = response.content.find((item) => item.type === "text");
-      raw = block?.text ?? "";
-    } else {
-      if (!geminiClient) {
-        /* v8 ignore next - GEMINI_API_KEY is always set when Gemini provider is active */
-        geminiClient = new GoogleGenerativeAI(config.GEMINI_API_KEY ?? "");
-      }
-      const model = geminiClient.getGenerativeModel({ model: resolved.model });
-      const response = await model.generateContent(prompt);
-      raw = response.response.text();
-    }
-
-    const json = extractJson(raw);
-    const parsed = SummarySchema.parse(JSON.parse(json));
+    const raw = await callLlm(buildPrompt(incident), resolved, {
+      maxTokens: 512,
+      temperature: 0.2,
+    });
+    const parsed = SummarySchema.parse(JSON.parse(extractJson(raw)));
     const summary = mapSummary(parsed);
     logger.info("LLM summary generated", {
       incidentId: incident.id,
@@ -217,6 +248,7 @@ function buildFixPrompt(input: {
   incident: Incident;
   repoContext: Array<{ path: string; content: string }>;
   strictDiff?: boolean;
+  plan?: FixPlan;
 }): string {
   const strictRules = input.strictDiff
     ? [
@@ -224,6 +256,16 @@ function buildFixPrompt(input: {
         "- Ensure each file includes `--- a/...` and `+++ b/...` lines.",
         "- Include at least one `@@` hunk per modified file.",
         "- The diff must apply cleanly with `git apply`; use exact context lines from the provided repo snippets.",
+      ]
+    : [];
+  const planSection = input.plan
+    ? [
+        "",
+        "Fix Plan (follow this precisely — only modify files listed here):",
+        `Target files: ${input.plan.files.join(", ")}`,
+        `Approach: ${input.plan.approach}`,
+        `Reasoning: ${input.plan.reasoning}`,
+        "Use exact lines from the Repo context snippets as unified diff context lines.",
       ]
     : [];
   return [
@@ -243,6 +285,7 @@ function buildFixPrompt(input: {
     "- Keep the change minimal and focused on the incident.",
     "- Do not modify secrets or environment files.",
     ...strictRules,
+    ...planSection,
     "",
     "Incident:",
     JSON.stringify(
@@ -360,60 +403,14 @@ export async function assessFixability(input: {
   incident: Incident;
   repoContext: Array<{ path: string; content: string }>;
 }): Promise<FixabilityAssessment | null> {
-  const config = getConfig();
-  const resolved = resolveProvider(
-    config.LLM_PROVIDER,
-    config.OPENAI_API_KEY,
-    config.ANTHROPIC_API_KEY,
-    config.GEMINI_API_KEY
-  );
-
-  if (!resolved) {
-    return null;
-  }
-
+  const resolved = resolvedProvider();
+  if (!resolved) return null;
   try {
-    const prompt = buildFixabilityPrompt(input);
-    let raw = "";
-
-    if (resolved.provider === "openai") {
-      if (!openaiClient) {
-        openaiClient = new OpenAI({ apiKey: config.OPENAI_API_KEY });
-      }
-      const response = await openaiClient.chat.completions.create({
-        model: resolved.model,
-        temperature: 0.1,
-        max_tokens: 256,
-        messages: [
-          { role: "system", content: "Return JSON only." },
-          { role: "user", content: prompt },
-        ],
-      });
-      raw = response.choices[0]?.message?.content ?? "";
-    } else if (resolved.provider === "anthropic") {
-      if (!anthropicClient) {
-        anthropicClient = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
-      }
-      const response = await anthropicClient.messages.create({
-        model: resolved.model,
-        max_tokens: 256,
-        temperature: 0.1,
-        messages: [{ role: "user", content: prompt }],
-      });
-      const block = response.content.find((item) => item.type === "text");
-      raw = block?.text ?? "";
-    } else {
-      if (!geminiClient) {
-        /* v8 ignore next - GEMINI_API_KEY is always set when Gemini provider is active */
-        geminiClient = new GoogleGenerativeAI(config.GEMINI_API_KEY ?? "");
-      }
-      const model = geminiClient.getGenerativeModel({ model: resolved.model });
-      const response = await model.generateContent(prompt);
-      raw = response.response.text();
-    }
-
-    const json = extractJson(raw);
-    return FixabilitySchema.parse(JSON.parse(json));
+    const raw = await callLlm(buildFixabilityPrompt(input), resolved, {
+      maxTokens: 256,
+      temperature: 0.1,
+    });
+    return FixabilitySchema.parse(JSON.parse(extractJson(raw)));
   } catch (error) {
     logger.warn("Fixability assessment failed", { error: String(error) });
     return null;
@@ -424,61 +421,19 @@ export async function generateFixProposal(input: {
   incident: Incident;
   repoContext: Array<{ path: string; content: string }>;
   strictDiff?: boolean;
+  plan?: FixPlan;
 }): Promise<FixProposal | null> {
-  const config = getConfig();
-  const resolved = resolveProvider(
-    config.LLM_PROVIDER,
-    config.OPENAI_API_KEY,
-    config.ANTHROPIC_API_KEY,
-    config.GEMINI_API_KEY,
-  );
-
+  const resolved = resolvedProvider();
   if (!resolved) {
     logger.info("Fix proposal skipped (no provider/api key configured)");
     return null;
   }
-
   try {
-    const prompt = buildFixPrompt(input);
-    let raw = "";
-
-    if (resolved.provider === "openai") {
-      if (!openaiClient) {
-        openaiClient = new OpenAI({ apiKey: config.OPENAI_API_KEY });
-      }
-      const response = await openaiClient.chat.completions.create({
-        model: resolved.model,
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: "Return JSON only." },
-          { role: "user", content: prompt },
-        ],
-      });
-      raw = response.choices[0]?.message?.content ?? "";
-    } else if (resolved.provider === "anthropic") {
-      if (!anthropicClient) {
-        anthropicClient = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
-      }
-      const response = await anthropicClient.messages.create({
-        model: resolved.model,
-        max_tokens: 1024,
-        temperature: 0.2,
-        messages: [{ role: "user", content: prompt }],
-      });
-      const block = response.content.find((item) => item.type === "text");
-      raw = block?.text ?? "";
-    } else {
-      if (!geminiClient) {
-        /* v8 ignore next - GEMINI_API_KEY is always set when Gemini provider is active */
-        geminiClient = new GoogleGenerativeAI(config.GEMINI_API_KEY ?? "");
-      }
-      const model = geminiClient.getGenerativeModel({ model: resolved.model });
-      const response = await model.generateContent(prompt);
-      raw = response.response.text();
-    }
-
-    const json = extractJson(raw);
-    return FixSchema.parse(JSON.parse(json));
+    const raw = await callLlm(buildFixPrompt(input), resolved, {
+      maxTokens: 1024,
+      temperature: 0.2,
+    });
+    return FixSchema.parse(JSON.parse(extractJson(raw)));
   } catch (error) {
     logger.warn("Fix proposal failed", { error: String(error) });
     return null;
@@ -489,62 +444,148 @@ export async function generateFixRewrite(input: {
   incident: Incident;
   repoContext: Array<{ path: string; content: string }>;
 }): Promise<FixRewrite | null> {
-  const config = getConfig();
-  const resolved = resolveProvider(
-    config.LLM_PROVIDER,
-    config.OPENAI_API_KEY,
-    config.ANTHROPIC_API_KEY,
-    config.GEMINI_API_KEY
-  );
-
+  const resolved = resolvedProvider();
   if (!resolved) {
     logger.info("Fix rewrite skipped (no provider/api key configured)");
     return null;
   }
-
   try {
-    const prompt = buildFixRewritePrompt(input);
-    let raw = "";
-
-    if (resolved.provider === "openai") {
-      if (!openaiClient) {
-        openaiClient = new OpenAI({ apiKey: config.OPENAI_API_KEY });
-      }
-      const response = await openaiClient.chat.completions.create({
-        model: resolved.model,
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: "Return JSON only." },
-          { role: "user", content: prompt },
-        ],
-      });
-      raw = response.choices[0]?.message?.content ?? "";
-    } else if (resolved.provider === "anthropic") {
-      if (!anthropicClient) {
-        anthropicClient = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
-      }
-      const response = await anthropicClient.messages.create({
-        model: resolved.model,
-        max_tokens: 2048,
-        temperature: 0.2,
-        messages: [{ role: "user", content: prompt }],
-      });
-      const block = response.content.find((item) => item.type === "text");
-      raw = block?.text ?? "";
-    } else {
-      if (!geminiClient) {
-        /* v8 ignore next - GEMINI_API_KEY is always set when Gemini provider is active */
-        geminiClient = new GoogleGenerativeAI(config.GEMINI_API_KEY ?? "");
-      }
-      const model = geminiClient.getGenerativeModel({ model: resolved.model });
-      const response = await model.generateContent(prompt);
-      raw = response.response.text();
-    }
-
-    const json = extractJson(raw);
-    return FixRewriteSchema.parse(JSON.parse(json));
+    const raw = await callLlm(buildFixRewritePrompt(input), resolved, {
+      maxTokens: 2048,
+      temperature: 0.2,
+    });
+    return FixRewriteSchema.parse(JSON.parse(extractJson(raw)));
   } catch (error) {
     logger.warn("Fix rewrite failed", { error: String(error) });
+    return null;
+  }
+}
+
+function buildFixPlanPrompt(input: {
+  incident: Incident;
+  repoContext: Array<{ path: string; content: string }>;
+}): string {
+  const availableFiles = input.repoContext
+    .map((c) => `  - ${c.path}`)
+    .join("\n");
+  return [
+    "You are a senior engineer planning a targeted code fix for a production incident.",
+    "Identify which files to modify and describe the specific change needed.",
+    "Return JSON only with this exact schema:",
+    "{",
+    '  "files": ["path/to/file.ts"],  // files to modify — MUST be from Available Files below',
+    '  "approach": "string",           // specific change to make (reference file names/functions)',
+    '  "reasoning": "string"           // root cause and why this change fixes the incident',
+    "}",
+    "",
+    "Rules:",
+    "- Output valid JSON only (no markdown).",
+    "- files MUST only contain paths from the Available Files list below.",
+    "- Keep to the minimum files necessary (prefer 1-2 files).",
+    "",
+    "Incident:",
+    JSON.stringify(
+      {
+        title: input.incident.title,
+        severity: input.incident.severity,
+        evidence: input.incident.evidence.slice(0, 5),
+      },
+      null,
+      2,
+    ),
+    "",
+    "Available Files (select ONLY from these):",
+    availableFiles || "  (none available)",
+    "",
+    "File Content Snippets:",
+    JSON.stringify(
+      input.repoContext.map((c) => ({
+        path: c.path,
+        snippet: c.content.slice(0, 400).trimEnd(),
+      })),
+      null,
+      2,
+    ),
+  ].join("\n");
+}
+
+function buildFixVerifyPrompt(input: {
+  incident: Incident;
+  plan: FixPlan;
+  diff: string;
+}): string {
+  return [
+    "You are a senior engineer reviewing a generated code patch for a production incident.",
+    "Assess whether the diff correctly and safely implements the stated plan.",
+    "Return JSON only with this exact schema:",
+    "{",
+    '  "valid": true,           // does the diff correctly and safely implement the plan?',
+    '  "confidence": 0.9,       // 0-1: how certain are you?',
+    '  "issues": ["string"],    // problems found (empty array if none)',
+    '  "verdict": "string"      // one-sentence assessment',
+    "}",
+    "",
+    "Rules:",
+    "- Output valid JSON only (no markdown).",
+    "- valid=false if diff modifies wrong files, logic is unrelated to incident, or change is unsafe.",
+    "- Use confidence >= 0.8 only if you are quite certain.",
+    "",
+    "Incident:",
+    JSON.stringify(
+      { title: input.incident.title, severity: input.incident.severity },
+      null,
+      2,
+    ),
+    "",
+    "Plan:",
+    JSON.stringify(
+      {
+        targetFiles: input.plan.files,
+        approach: input.plan.approach,
+        reasoning: input.plan.reasoning,
+      },
+      null,
+      2,
+    ),
+    "",
+    "Generated Diff:",
+    input.diff.length > 4000 ? `${input.diff.slice(0, 4000)}…` : input.diff,
+  ].join("\n");
+}
+
+export async function generateFixPlan(input: {
+  incident: Incident;
+  repoContext: Array<{ path: string; content: string }>;
+}): Promise<FixPlan | null> {
+  const resolved = resolvedProvider();
+  if (!resolved) return null;
+  try {
+    const raw = await callLlm(buildFixPlanPrompt(input), resolved, {
+      maxTokens: 512,
+      temperature: 0.1,
+    });
+    return FixPlanSchema.parse(JSON.parse(extractJson(raw)));
+  } catch (error) {
+    logger.warn("Fix plan generation failed", { error: String(error) });
+    return null;
+  }
+}
+
+export async function verifyFixPatch(input: {
+  incident: Incident;
+  plan: FixPlan;
+  diff: string;
+}): Promise<FixVerify | null> {
+  const resolved = resolvedProvider();
+  if (!resolved) return null;
+  try {
+    const raw = await callLlm(buildFixVerifyPrompt(input), resolved, {
+      maxTokens: 512,
+      temperature: 0.1,
+    });
+    return FixVerifySchema.parse(JSON.parse(extractJson(raw)));
+  } catch (error) {
+    logger.warn("Fix verification failed", { error: String(error) });
     return null;
   }
 }
@@ -554,6 +595,8 @@ export const __test__ = {
   resolveProvider,
   SummarySchema,
   FixSchema,
+  FixPlanSchema,
+  FixVerifySchema,
   FixRewriteSchema,
   FixabilitySchema,
 };

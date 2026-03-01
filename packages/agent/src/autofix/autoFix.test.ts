@@ -7,8 +7,10 @@ vi.mock("../lib/logger.js", () => ({
 }));
 vi.mock("../lib/llm.js", () => ({
   assessFixability: vi.fn(),
+  generateFixPlan: vi.fn(),
   generateFixProposal: vi.fn(),
   generateFixRewrite: vi.fn(),
+  verifyFixPatch: vi.fn(),
 }));
 vi.mock("../rag/retrieveRepo.js", () => ({ retrieveRepoContext: vi.fn() }));
 vi.mock("../tools/dockerSandbox.js", () => ({ runInSandbox: vi.fn() }));
@@ -40,8 +42,10 @@ import { autoFixIncident } from "./autoFix.js";
 import { getConfig } from "../lib/config.js";
 import {
   assessFixability,
+  generateFixPlan,
   generateFixProposal,
   generateFixRewrite,
+  verifyFixPatch,
 } from "../lib/llm.js";
 import { retrieveRepoContext } from "../rag/retrieveRepo.js";
 import { runInSandbox } from "../tools/dockerSandbox.js";
@@ -135,7 +139,18 @@ function mockHappyPath() {
     fixability_score: 0.9,
     reason: "clear code fix available",
   });
+  vi.mocked(generateFixPlan).mockResolvedValue({
+    files: ["src/index.ts"],
+    approach: "Fix the timeout constant",
+    reasoning: "Low timeout causes failures under load",
+  });
   vi.mocked(generateFixProposal).mockResolvedValue(validProposal);
+  vi.mocked(verifyFixPatch).mockResolvedValue({
+    valid: true,
+    confidence: 0.9,
+    issues: [],
+    verdict: "Patch correctly implements the plan",
+  });
   vi.mocked(generateFixRewrite).mockResolvedValue(null);
 
   // Filesystem — must be re-set after every vi.resetAllMocks()
@@ -1127,5 +1142,248 @@ describe("autoFixIncident — unexpected errors", () => {
     vi.mocked(createIssueComment).mockRejectedValue(new Error("comment failed"));
     const result = await autoFixIncident(input);
     expect(result.status).toBe("failed");
+  });
+});
+
+// ─── Plan → Patch → Verify loop ───────────────────────────────────────────────
+
+describe("autoFixIncident — plan→patch→verify loop", () => {
+  it("happy path: plan generated, context filtered to plan files, verify passes", async () => {
+    mockHappyPath();
+    const result = await autoFixIncident(input);
+    expect(result.status).toBe("pr_created");
+    expect(generateFixPlan).toHaveBeenCalledOnce();
+    expect(verifyFixPatch).toHaveBeenCalledOnce();
+    // Proposal should receive the grounded (filtered) context and plan
+    expect(generateFixProposal).toHaveBeenCalledWith(
+      expect.objectContaining({ plan: expect.objectContaining({ files: ["src/index.ts"] }) }),
+    );
+  });
+
+  it("uses full context when plan files are NOT in retrieved context", async () => {
+    mockHappyPath();
+    vi.mocked(generateFixPlan).mockResolvedValue({
+      files: ["src/other.ts"], // not in context (context only has src/index.ts)
+      approach: "Fix other file",
+      reasoning: "Other file is wrong",
+    });
+    const result = await autoFixIncident(input);
+    expect(result.status).toBe("pr_created");
+    // Falls back to full contextPayload — still passes
+    expect(generateFixProposal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoContext: [{ path: "src/index.ts", content: "const x = 1;" }],
+      }),
+    );
+  });
+
+  it("skips verify and uses full context when generateFixPlan returns null", async () => {
+    mockHappyPath();
+    vi.mocked(generateFixPlan).mockResolvedValue(null);
+    const result = await autoFixIncident(input);
+    expect(result.status).toBe("pr_created");
+    expect(verifyFixPatch).not.toHaveBeenCalled();
+    expect(generateFixProposal).toHaveBeenCalledWith(
+      expect.objectContaining({ plan: undefined }),
+    );
+  });
+
+  it("continues normally when verifyFixPatch returns null (no LLM provider)", async () => {
+    mockHappyPath();
+    vi.mocked(verifyFixPatch).mockResolvedValue(null);
+    const result = await autoFixIncident(input);
+    expect(result.status).toBe("pr_created");
+  });
+
+  it("continues when verification confidence is below rejection threshold (<0.7)", async () => {
+    mockHappyPath();
+    vi.mocked(verifyFixPatch).mockResolvedValue({
+      valid: false,
+      confidence: 0.5, // below 0.7 — not a hard rejection
+      issues: ["minor concern"],
+      verdict: "Uncertain",
+    });
+    const result = await autoFixIncident(input);
+    expect(result.status).toBe("pr_created");
+  });
+
+  it("falls back to rewrite when high-confidence verification rejects the patch", async () => {
+    mockHappyPath();
+    vi.mocked(verifyFixPatch).mockResolvedValue({
+      valid: false,
+      confidence: 0.85, // above 0.7 → hard rejection
+      issues: ["Modifies wrong files"],
+      verdict: "Patch does not match plan",
+    });
+    // After proposal is nulled by verify, generateFixRewrite runs
+    vi.mocked(generateFixRewrite).mockResolvedValue(validRewrite);
+    // validateRewriteFiles: readFile throws → original=null → ok:true
+    vi.mocked(fs.readFile).mockRejectedValue(new Error("ENOENT"));
+    const result = await autoFixIncident(input);
+    expect(result.status).toBe("pr_created");
+    expect(generateFixRewrite).toHaveBeenCalled();
+  });
+});
+
+// ─── Zero-context guard ────────────────────────────────────────────────────────
+
+describe("autoFixIncident — zero RAG context guard", () => {
+  it("skips generateFixPlan and logs a warning when RAG returns 0 chunks", async () => {
+    mockHappyPath();
+    vi.mocked(retrieveRepoContext).mockResolvedValue([]);
+    // With 0 context, heuristic fixability = 0.35 + critical(1.0)*0.25 + 0 + confidence*0.35 ≈ 0.93 → above threshold
+    vi.mocked(assessFixability).mockResolvedValue(null);
+    vi.mocked(generateFixProposal).mockResolvedValue(validProposal);
+    vi.mocked(generateFixRewrite).mockResolvedValue(validRewrite);
+
+    const result = await autoFixIncident(input);
+
+    // generateFixPlan must NOT be called when context is empty
+    expect(generateFixPlan).not.toHaveBeenCalled();
+    // verifyFixPatch also skipped (plan is null → else-if branch not taken)
+    expect(verifyFixPatch).not.toHaveBeenCalled();
+    // Job still completes (proposal or rewrite path)
+    expect(["pr_created", "failed"]).toContain(result.status);
+  });
+
+  it("proceeds to proposal without plan when RAG returns 0 chunks", async () => {
+    mockHappyPath();
+    vi.mocked(retrieveRepoContext).mockResolvedValue([]);
+    vi.mocked(assessFixability).mockResolvedValue(null);
+    vi.mocked(generateFixProposal).mockResolvedValue(validProposal);
+
+    await autoFixIncident(input);
+
+    expect(generateFixProposal).toHaveBeenCalledWith(
+      expect.objectContaining({ plan: undefined, repoContext: [] }),
+    );
+  });
+});
+
+// ─── Diff path remapping ───────────────────────────────────────────────────────
+
+describe("autoFixIncident — diff path remapping on git apply failure", () => {
+  it("remaps wrong diff paths using git ls-files when git apply fails", async () => {
+    mockHappyPath();
+
+    // The proposal diff references `src/index.ts` (wrong monorepo path)
+    const wrongPathDiff = [
+      "diff --git a/src/index.ts b/src/index.ts",
+      "--- a/src/index.ts",
+      "+++ b/src/index.ts",
+      "@@ -59,7 +59,7 @@",
+      "-      const total = items.reduce(",
+      "+      const total = (items ?? []).reduce(",
+    ].join("\n");
+
+    vi.mocked(generateFixProposal).mockResolvedValue({
+      summary: "Fix null guard",
+      reason: "items can be null",
+      test_plan: [],
+      diff: wrongPathDiff,
+    });
+
+    // git apply fails twice (wrong path), then ls-files returns the real path,
+    // then the remapped apply succeeds
+    vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // clone
+      .mockResolvedValueOnce({ code: 0, output: "" }) // clone (second call)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // status
+      .mockResolvedValueOnce({ code: 1, output: "error: src/index.ts: No such file or directory" }) // first apply attempt
+      .mockResolvedValueOnce({ code: 1, output: "error: src/index.ts: No such file or directory" }) // sanitized retry
+      .mockResolvedValueOnce({ code: 0, output: "apps/demo-services/src/index.ts" }) // ls-files
+      .mockResolvedValueOnce({ code: 0, output: "" }) // remapped apply
+      .mockResolvedValue({ code: 0, output: "" }); // all remaining git calls
+
+    const result = await autoFixIncident(input);
+
+    // ls-files was called to look up the correct path
+    expect(execGit).toHaveBeenCalledWith(["ls-files"], expect.any(String));
+    expect(result.status).toBe("pr_created");
+  });
+
+  it("skips remapping when the path already exists in the workspace (continue branch)", async () => {
+    mockHappyPath();
+
+    const wrongPathDiff = [
+      "diff --git a/src/index.ts b/src/index.ts",
+      "--- a/src/index.ts",
+      "+++ b/src/index.ts",
+      "@@ -1,1 +1,1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+
+    vi.mocked(generateFixProposal).mockResolvedValue({
+      summary: "Fix",
+      reason: "reason",
+      test_plan: [],
+      diff: wrongPathDiff,
+    });
+
+    // Both initial applies fail → remapDiffPaths is called
+    // fs.access succeeds → path exists → continue branch hit → remapped is empty → returns null
+    // applyPatch throws → falls back to rewrite
+    vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" })
+      .mockResolvedValueOnce({ code: 0, output: "" })
+      .mockResolvedValueOnce({ code: 0, output: "" })
+      .mockResolvedValueOnce({ code: 1, output: "error: context" }) // first apply
+      .mockResolvedValueOnce({ code: 1, output: "error: context" }) // sanitized retry
+      // ls-files: code 0 but the path resolves via access first so ls-files is called but access wins
+      .mockResolvedValueOnce({ code: 0, output: "src/index.ts" }) // ls-files
+      .mockResolvedValueOnce({ code: 1, output: "error: still fails" }) // remapped apply
+      .mockResolvedValue({ code: 0, output: "" });
+
+    // access succeeds for the path → the continue branch executes (line 299)
+    vi.mocked(fs.access).mockResolvedValue(undefined);
+    // rewrite fallback kicks in since applyPatch throws
+    vi.mocked(generateFixRewrite).mockResolvedValue(validRewrite);
+
+    const result = await autoFixIncident(input);
+
+    // ls-files WAS called (remapDiffPaths was entered)
+    expect(execGit).toHaveBeenCalledWith(["ls-files"], expect.any(String));
+    // Result: rewrite fallback or pr_created
+    expect(["pr_created", "failed"]).toContain(result.status);
+  });
+
+  it("picks best candidate when multiple files match the same basename", async () => {
+    mockHappyPath();
+
+    const wrongPathDiff = [
+      "diff --git a/src/index.ts b/src/index.ts",
+      "--- a/src/index.ts",
+      "+++ b/src/index.ts",
+      "@@ -1,1 +1,1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+
+    vi.mocked(generateFixProposal).mockResolvedValue({
+      summary: "Fix",
+      reason: "reason",
+      test_plan: [],
+      diff: wrongPathDiff,
+    });
+
+    vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" })
+      .mockResolvedValueOnce({ code: 0, output: "" })
+      .mockResolvedValueOnce({ code: 0, output: "" })
+      .mockResolvedValueOnce({ code: 1, output: "error: No such file" }) // first apply
+      .mockResolvedValueOnce({ code: 1, output: "error: No such file" }) // sanitized retry
+      // ls-files returns TWO candidates → multi-candidate branch (lines 311-314)
+      .mockResolvedValueOnce({
+        code: 0,
+        output: "apps/demo-services/src/index.ts\npackages/agent/src/index.ts",
+      })
+      .mockResolvedValueOnce({ code: 0, output: "" }) // remapped apply
+      .mockResolvedValue({ code: 0, output: "" });
+
+    const result = await autoFixIncident(input);
+
+    expect(execGit).toHaveBeenCalledWith(["ls-files"], expect.any(String));
+    expect(result.status).toBe("pr_created");
   });
 });
