@@ -188,7 +188,12 @@ export async function indexRepository(): Promise<void> {
     });
   }
 
-  const files = await walkFiles(repoPath);
+  const subdir = config.RAG_REPO_SUBDIR?.trim();
+  const walkRoot = subdir ? path.join(repoPath, subdir) : repoPath;
+  if (subdir) {
+    logger.info("Repo indexing scoped to subdirectory", { subdir });
+  }
+  const files = await walkFiles(walkRoot);
   logger.info("Repo files discovered", { count: files.length });
   const existingPaths = await listRepoPaths(repoKey);
   const currentPaths = new Set<string>();

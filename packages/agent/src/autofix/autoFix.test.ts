@@ -256,7 +256,7 @@ describe("autoFixIncident — early exits", () => {
     vi.mocked(assessFixability).mockResolvedValue(null);
     vi.mocked(generateFixProposal).mockResolvedValue(null);
     vi.mocked(generateFixRewrite).mockResolvedValue(null);
-    vi.mocked(fs.access).mockRejectedValue(new Error("ENOENT"));
+    vi.mocked(execGit).mockResolvedValue({ code: 0, output: "" });
     const result = await autoFixIncident(input);
     expect(result.reason).toBe("invalid_diff");
   });
@@ -425,7 +425,9 @@ describe("autoFixIncident — rewrite validation", () => {
     vi.mocked(generateFixProposal).mockResolvedValue(null);
     // 25-line original — readFile must return a string, not a Buffer
     const longContent = Array.from({ length: 25 }, (_, i) => `line ${i}`).join("\n");
-    vi.mocked(fs.readFile).mockResolvedValueOnce(longContent as any);
+    vi.mocked(fs.readFile)
+      .mockResolvedValueOnce("" as any)         // readCurrentFiles (plan.files → src/index.ts)
+      .mockResolvedValueOnce(longContent as any); // validateRewriteFiles reads the original
     vi.mocked(generateFixRewrite).mockResolvedValue({
       ...validRewrite,
       files: [{ path: "src/index.ts", content: "x" }],
@@ -443,7 +445,9 @@ describe("autoFixIncident — rewrite validation", () => {
       { length: 10 },
       (_, i) => `function line${i}() { return ${i}; }`
     ).join("\n");
-    vi.mocked(fs.readFile).mockResolvedValueOnce(shortOriginal as any);
+    vi.mocked(fs.readFile)
+      .mockResolvedValueOnce("" as any)           // readCurrentFiles (plan.files → src/index.ts)
+      .mockResolvedValueOnce(shortOriginal as any); // validateRewriteFiles reads the original
     vi.mocked(generateFixRewrite).mockResolvedValue({
       ...validRewrite,
       files: [{ path: "src/index.ts", content: "x" }], // way shorter than 50% of original
@@ -489,6 +493,7 @@ describe("autoFixIncident — rewrite validation", () => {
     // Diff apply fails in workDir → fallback generateFixRewrite returns a file with a denylist path.
     // validateRewriteFiles has no denylist check, so it passes; applyRewriteFiles hits line 182.
     vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
       .mockResolvedValueOnce({ code: 1, output: "apply fail" }) // workDir apply attempt 1
       .mockResolvedValueOnce({ code: 1, output: "sanitize retry fail" }); // workDir apply retry
     vi.mocked(generateFixRewrite).mockResolvedValue({
@@ -553,6 +558,7 @@ describe("autoFixIncident — git operations", () => {
     mockHappyPath();
     // apply(workDir) → success; status → dirty
     vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
       .mockResolvedValueOnce({ code: 0, output: "" }) // apply in workDir
       .mockResolvedValueOnce({ code: 0, output: "M src/index.ts\n" }); // status dirty
     const result = await autoFixIncident(input);
@@ -563,6 +569,7 @@ describe("autoFixIncident — git operations", () => {
   it("returns git_checkout_base_failed when checkout main fails", async () => {
     mockHappyPath();
     vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
       .mockResolvedValueOnce({ code: 0, output: "" }) // apply workDir
       .mockResolvedValueOnce({ code: 0, output: "" }) // status clean
       .mockResolvedValueOnce({ code: 1, output: "branch not found" }); // checkout main
@@ -574,6 +581,7 @@ describe("autoFixIncident — git operations", () => {
   it("returns git_checkout_failed when checkout -b fails", async () => {
     mockHappyPath();
     vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
       .mockResolvedValueOnce({ code: 0, output: "" }) // apply workDir
       .mockResolvedValueOnce({ code: 0, output: "" }) // status
       .mockResolvedValueOnce({ code: 0, output: "" }) // checkout main
@@ -587,6 +595,7 @@ describe("autoFixIncident — git operations", () => {
   it("returns git_commit_failed when commit fails", async () => {
     mockHappyPath();
     vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
       .mockResolvedValueOnce({ code: 0, output: "" }) // apply workDir
       .mockResolvedValueOnce({ code: 0, output: "" }) // status
       .mockResolvedValueOnce({ code: 0, output: "" }) // checkout main
@@ -604,6 +613,7 @@ describe("autoFixIncident — git operations", () => {
   it("returns git_push_failed when push fails", async () => {
     mockHappyPath();
     vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
       .mockResolvedValueOnce({ code: 0, output: "" }) // apply workDir
       .mockResolvedValueOnce({ code: 0, output: "" }) // status
       .mockResolvedValueOnce({ code: 0, output: "" }) // checkout main
@@ -644,6 +654,7 @@ describe("autoFixIncident — git operations", () => {
     });
     // First apply in workDir fails; sanitized retry succeeds → covers the retry-success branch.
     vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
       .mockResolvedValueOnce({ code: 1, output: "whitespace error" }) // workDir apply attempt 1 → fail
       .mockResolvedValueOnce({ code: 0, output: "" }) // workDir apply retry → success (line 293)
       .mockResolvedValueOnce({ code: 0, output: "" }) // status --porcelain
@@ -664,6 +675,7 @@ describe("autoFixIncident — git operations", () => {
     // normalizeDiff trims the trailing newline; sanitizeDiff adds it back → sanitized !== diff
     // → applyPatch retries once with the sanitized version.  Both calls must fail.
     vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
       .mockResolvedValueOnce({ code: 1, output: "patch does not apply" }) // initial apply
       .mockResolvedValueOnce({ code: 1, output: "sanitized retry also fails" }); // sanitize retry
     vi.mocked(generateFixRewrite).mockResolvedValue(null);
@@ -676,8 +688,22 @@ describe("autoFixIncident — git operations", () => {
     mockHappyPath();
     // Both the initial apply and the sanitize-retry must fail to trigger the rewrite fallback
     vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
       .mockResolvedValueOnce({ code: 1, output: "patch does not apply" })
       .mockResolvedValueOnce({ code: 1, output: "sanitized retry also fails" });
+    vi.mocked(generateFixRewrite).mockResolvedValue(validRewrite);
+    const result = await autoFixIncident(input);
+    expect(result.status).toBe("pr_created");
+  });
+
+  it("uses contextPayload paths when plan is null in the fallback rewrite catch block (covers line 798)", async () => {
+    mockHappyPath();
+    // plan = null → fallbackFilePaths falls back to contextPayload paths
+    vi.mocked(generateFixPlan).mockResolvedValue(null);
+    vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
+      .mockResolvedValueOnce({ code: 1, output: "patch fails" })
+      .mockResolvedValueOnce({ code: 1, output: "retry fails" });
     vi.mocked(generateFixRewrite).mockResolvedValue(validRewrite);
     const result = await autoFixIncident(input);
     expect(result.status).toBe("pr_created");
@@ -848,24 +874,26 @@ describe("autoFixIncident — inDocker mode (undefined mounts)", () => {
 // the closing } is counted as covered by v8.
 
 describe("autoFixIncident — recordAutoFixAttempt error swallowing", () => {
-  // Sequence for git_commit_failed (commit is call #9)
+  // Sequence for git_commit_failed (ls-files is call #1, commit is call #10)
   function gitCommitFailSequence() {
     vi.mocked(execGit)
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 1: apply workDir
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 2: status
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 3: checkout main
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 4: apply repoPath
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 5: checkout -b
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 6: config name
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 7: config email
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 8: add -A
-      .mockResolvedValueOnce({ code: 1, output: "nothing to commit" }); // 9: commit
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 1: ls-files (repoPath)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 2: apply workDir
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 3: status
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 4: checkout main
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 5: apply repoPath
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 6: checkout -b
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 7: config name
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 8: config email
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 9: add -A
+      .mockResolvedValueOnce({ code: 1, output: "nothing to commit" }); // 10: commit
   }
 
-  // Sequence for git_push_failed (push is call #10)
+  // Sequence for git_push_failed (ls-files is call #1, push is call #11)
   function gitPushFailSequence() {
     vi.mocked(execGit)
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 1-9 all succeed
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 1: ls-files (repoPath)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 2-10 all succeed
       .mockResolvedValueOnce({ code: 0, output: "" })
       .mockResolvedValueOnce({ code: 0, output: "" })
       .mockResolvedValueOnce({ code: 0, output: "" })
@@ -873,8 +901,8 @@ describe("autoFixIncident — recordAutoFixAttempt error swallowing", () => {
       .mockResolvedValueOnce({ code: 0, output: "" })
       .mockResolvedValueOnce({ code: 0, output: "" })
       .mockResolvedValueOnce({ code: 0, output: "" })
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 9: commit OK
-      .mockResolvedValueOnce({ code: 1, output: "rejected" }); // 10: push
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 10: commit OK
+      .mockResolvedValueOnce({ code: 1, output: "rejected" }); // 11: push
   }
 
   it("swallows DB error when recording git_commit_failed (covers line 897)", async () => {
@@ -957,7 +985,8 @@ describe("autoFixIncident — recordAutoFixAttempt error swallowing", () => {
       .fill("  function originalFoo() { return complexValue(); }")
       .join("\n");
     vi.mocked(fs.readFile)
-      .mockResolvedValueOnce(longOriginal as any)
+      .mockResolvedValueOnce("" as any)          // readCurrentFiles (plan.files → src/index.ts)
+      .mockResolvedValueOnce(longOriginal as any) // validateRewriteFiles reads the original
       .mockRejectedValue(new Error("ENOENT"));
     vi.mocked(recordAutoFixAttempt).mockRejectedValue(new Error("db gone"));
     const result = await autoFixIncident(input);
@@ -984,6 +1013,7 @@ describe("autoFixIncident — recordAutoFixAttempt error swallowing", () => {
     mockHappyPath();
     // Both patch apply attempts fail → triggers rewrite fallback
     vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
       .mockResolvedValueOnce({ code: 1, output: "patch fails" })
       .mockResolvedValueOnce({ code: 1, output: "retry fails" });
     vi.mocked(generateFixRewrite).mockResolvedValue(null); // no fallback
@@ -997,6 +1027,7 @@ describe("autoFixIncident — recordAutoFixAttempt error swallowing", () => {
     mockHappyPath();
     // Both apply attempts fail → triggers rewrite fallback
     vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
       .mockResolvedValueOnce({ code: 1, output: "patch fails" })
       .mockResolvedValueOnce({ code: 1, output: "retry fails" });
     vi.mocked(generateFixRewrite).mockResolvedValue({
@@ -1010,6 +1041,7 @@ describe("autoFixIncident — recordAutoFixAttempt error swallowing", () => {
       .fill("  function originalFoo() { return complexValue(); }")
       .join("\n");
     vi.mocked(fs.readFile)
+      .mockResolvedValueOnce("" as any)          // readCurrentFiles in fallback catch block
       .mockResolvedValueOnce(longOriginal as any) // validateRewriteFiles reads original
       .mockRejectedValue(new Error("ENOENT")); // PR template and subsequent reads
     const result = await autoFixIncident(input);
@@ -1020,6 +1052,7 @@ describe("autoFixIncident — recordAutoFixAttempt error swallowing", () => {
   it("swallows DB error when recording rewrite_invalid (covers line 658)", async () => {
     mockHappyPath();
     vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath)
       .mockResolvedValueOnce({ code: 1, output: "patch fails" })
       .mockResolvedValueOnce({ code: 1, output: "retry fails" });
     vi.mocked(generateFixRewrite).mockResolvedValue({
@@ -1032,7 +1065,8 @@ describe("autoFixIncident — recordAutoFixAttempt error swallowing", () => {
       .fill("  function originalFoo() { return complexValue(); }")
       .join("\n");
     vi.mocked(fs.readFile)
-      .mockResolvedValueOnce(longOriginal as any)
+      .mockResolvedValueOnce("" as any)          // readCurrentFiles in fallback catch block
+      .mockResolvedValueOnce(longOriginal as any) // validateRewriteFiles reads original
       .mockRejectedValue(new Error("ENOENT"));
     vi.mocked(recordAutoFixAttempt).mockRejectedValue(new Error("db gone"));
     const result = await autoFixIncident(input);
@@ -1052,8 +1086,9 @@ describe("autoFixIncident — recordAutoFixAttempt error swallowing", () => {
   it("swallows DB error when recording dirty_repo (covers line 798)", async () => {
     mockHappyPath();
     vi.mocked(execGit)
-      .mockResolvedValueOnce({ code: 0, output: "" })          // 1: apply workDir
-      .mockResolvedValueOnce({ code: 0, output: "M file\n" }); // 2: status dirty
+      .mockResolvedValueOnce({ code: 0, output: "" })          // 1: ls-files (repoPath)
+      .mockResolvedValueOnce({ code: 0, output: "" })          // 2: apply workDir
+      .mockResolvedValueOnce({ code: 0, output: "M file\n" }); // 3: status dirty
     vi.mocked(recordAutoFixAttempt).mockRejectedValue(new Error("db gone"));
     const result = await autoFixIncident(input);
     expect(result.status).toBe("failed");
@@ -1063,9 +1098,10 @@ describe("autoFixIncident — recordAutoFixAttempt error swallowing", () => {
   it("swallows DB error when recording git_checkout_base_failed (covers line 827)", async () => {
     mockHappyPath();
     vi.mocked(execGit)
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 1: apply workDir
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 2: status clean
-      .mockResolvedValueOnce({ code: 1, output: "err" }); // 3: checkout main
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 1: ls-files (repoPath)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 2: apply workDir
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 3: status clean
+      .mockResolvedValueOnce({ code: 1, output: "err" }); // 4: checkout main
     vi.mocked(recordAutoFixAttempt).mockRejectedValue(new Error("db gone"));
     const result = await autoFixIncident(input);
     expect(result.status).toBe("failed");
@@ -1075,11 +1111,12 @@ describe("autoFixIncident — recordAutoFixAttempt error swallowing", () => {
   it("swallows DB error when recording git_checkout_failed (covers line 861)", async () => {
     mockHappyPath();
     vi.mocked(execGit)
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 1: apply workDir
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 2: status clean
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 3: checkout main
-      .mockResolvedValueOnce({ code: 0, output: "" }) // 4: apply repoPath
-      .mockResolvedValueOnce({ code: 1, output: "exists" }); // 5: checkout -b
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 1: ls-files (repoPath)
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 2: apply workDir
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 3: status clean
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 4: checkout main
+      .mockResolvedValueOnce({ code: 0, output: "" }) // 5: apply repoPath
+      .mockResolvedValueOnce({ code: 1, output: "exists" }); // 6: checkout -b
     vi.mocked(recordAutoFixAttempt).mockRejectedValue(new Error("db gone"));
     const result = await autoFixIncident(input);
     expect(result.status).toBe("failed");
@@ -1228,32 +1265,49 @@ describe("autoFixIncident — plan→patch→verify loop", () => {
 // ─── Zero-context guard ────────────────────────────────────────────────────────
 
 describe("autoFixIncident — zero RAG context guard", () => {
-  it("skips generateFixPlan and logs a warning when RAG returns 0 chunks", async () => {
+  it("still calls generateFixPlan with trackedFiles when RAG returns 0 chunks", async () => {
+    // Root-cause fix: LLM is grounded with git ls-files output, so generateFixPlan
+    // is now always called (the old 0-chunk skip was itself the bandage).
     mockHappyPath();
     vi.mocked(retrieveRepoContext).mockResolvedValue([]);
-    // With 0 context, heuristic fixability = 0.35 + critical(1.0)*0.25 + 0 + confidence*0.35 ≈ 0.93 → above threshold
     vi.mocked(assessFixability).mockResolvedValue(null);
     vi.mocked(generateFixProposal).mockResolvedValue(validProposal);
-    vi.mocked(generateFixRewrite).mockResolvedValue(validRewrite);
 
     const result = await autoFixIncident(input);
 
-    // generateFixPlan must NOT be called when context is empty
-    expect(generateFixPlan).not.toHaveBeenCalled();
-    // verifyFixPatch also skipped (plan is null → else-if branch not taken)
-    expect(verifyFixPatch).not.toHaveBeenCalled();
-    // Job still completes (proposal or rewrite path)
-    expect(["pr_created", "failed"]).toContain(result.status);
+    // generateFixPlan IS called — it receives the trackedFiles list from ls-files
+    expect(generateFixPlan).toHaveBeenCalledWith(
+      expect.objectContaining({ repoContext: [], trackedFiles: expect.any(Array) }),
+    );
+    expect(result.status).toBe("pr_created");
   });
 
-  it("proceeds to proposal without plan when RAG returns 0 chunks", async () => {
+  it("falls back to trackedFiles=[] when git ls-files fails (covers autoFix.ts:559)", async () => {
+    // When ls-files itself returns a non-zero exit code, trackedFiles should be []
+    // and the workflow should continue normally.
+    mockHappyPath();
+    vi.mocked(execGit)
+      .mockResolvedValueOnce({ code: 1, output: "error: not a git repo" }) // ls-files fails
+      .mockResolvedValue({ code: 0, output: "" }); // all other git calls succeed
+
+    const result = await autoFixIncident(input);
+
+    expect(generateFixPlan).toHaveBeenCalledWith(
+      expect.objectContaining({ trackedFiles: [] }),
+    );
+    expect(result.status).toBe("pr_created");
+  });
+
+  it("proceeds to proposal without plan when RAG returns 0 chunks and plan returns null", async () => {
     mockHappyPath();
     vi.mocked(retrieveRepoContext).mockResolvedValue([]);
     vi.mocked(assessFixability).mockResolvedValue(null);
+    vi.mocked(generateFixPlan).mockResolvedValue(null); // plan LLM fails
     vi.mocked(generateFixProposal).mockResolvedValue(validProposal);
 
     await autoFixIncident(input);
 
+    // Proposal is still called — with empty context but grounded trackedFiles
     expect(generateFixProposal).toHaveBeenCalledWith(
       expect.objectContaining({ plan: undefined, repoContext: [] }),
     );
@@ -1262,16 +1316,21 @@ describe("autoFixIncident — zero RAG context guard", () => {
 
 // ─── Diff path remapping ───────────────────────────────────────────────────────
 
-describe("autoFixIncident — diff path remapping on git apply failure", () => {
-  it("remaps wrong diff paths using git ls-files when git apply fails", async () => {
+describe("autoFixIncident — diff path remapping", () => {
+  // ── Zero-context: proactive guard via fs.access ──────────────────────────
+
+  // ── Non-zero context: reactive remap inside applyPatch ──────────────────
+
+  it("remaps wrong diff paths using git ls-files when git apply fails (reactive)", async () => {
     mockHappyPath();
 
-    // The proposal diff references `src/index.ts` (wrong monorepo path)
+    // LLM used `src/index.ts` but the real path is `apps/demo-services/src/index.ts`
     const wrongPathDiff = [
       "diff --git a/src/index.ts b/src/index.ts",
       "--- a/src/index.ts",
       "+++ b/src/index.ts",
       "@@ -59,7 +59,7 @@",
+      " const x = 1;",
       "-      const total = items.reduce(",
       "+      const total = (items ?? []).reduce(",
     ].join("\n");
@@ -1283,21 +1342,18 @@ describe("autoFixIncident — diff path remapping on git apply failure", () => {
       diff: wrongPathDiff,
     });
 
-    // git apply fails twice (wrong path), then ls-files returns the real path,
-    // then the remapped apply succeeds
+    // Both initial applies fail → remapDiffPaths is called (reactive, inside applyPatch)
+    // ls-files returns the real path → remapped apply succeeds
     vi.mocked(execGit)
-      .mockResolvedValueOnce({ code: 0, output: "" }) // clone
-      .mockResolvedValueOnce({ code: 0, output: "" }) // clone (second call)
-      .mockResolvedValueOnce({ code: 0, output: "" }) // status
-      .mockResolvedValueOnce({ code: 1, output: "error: src/index.ts: No such file or directory" }) // first apply attempt
-      .mockResolvedValueOnce({ code: 1, output: "error: src/index.ts: No such file or directory" }) // sanitized retry
-      .mockResolvedValueOnce({ code: 0, output: "apps/demo-services/src/index.ts" }) // ls-files
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath, path grounding)
+      .mockResolvedValueOnce({ code: 1, output: "error: src/index.ts: No such file" }) // first apply
+      .mockResolvedValueOnce({ code: 1, output: "error: src/index.ts: No such file" }) // sanitized retry
+      .mockResolvedValueOnce({ code: 0, output: "apps/demo-services/src/index.ts" }) // ls-files (remapDiffPaths)
       .mockResolvedValueOnce({ code: 0, output: "" }) // remapped apply
-      .mockResolvedValue({ code: 0, output: "" }); // all remaining git calls
+      .mockResolvedValue({ code: 0, output: "" }); // remaining git calls
 
     const result = await autoFixIncident(input);
 
-    // ls-files was called to look up the correct path
     expect(execGit).toHaveBeenCalledWith(["ls-files"], expect.any(String));
     expect(result.status).toBe("pr_created");
   });
@@ -1321,41 +1377,36 @@ describe("autoFixIncident — diff path remapping on git apply failure", () => {
       diff: wrongPathDiff,
     });
 
-    // Both initial applies fail → remapDiffPaths is called
-    // fs.access succeeds → path exists → continue branch hit → remapped is empty → returns null
-    // applyPatch throws → falls back to rewrite
+    // Both applies fail → remapDiffPaths called
+    // fs.access SUCCEEDS → continue branch (line 299) → remapped is empty → remap returns null
+    // → applyPatch throws → rewrite fallback
     vi.mocked(execGit)
-      .mockResolvedValueOnce({ code: 0, output: "" })
-      .mockResolvedValueOnce({ code: 0, output: "" })
-      .mockResolvedValueOnce({ code: 0, output: "" })
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath, path grounding)
       .mockResolvedValueOnce({ code: 1, output: "error: context" }) // first apply
-      .mockResolvedValueOnce({ code: 1, output: "error: context" }) // sanitized retry
-      // ls-files: code 0 but the path resolves via access first so ls-files is called but access wins
-      .mockResolvedValueOnce({ code: 0, output: "src/index.ts" }) // ls-files
-      .mockResolvedValueOnce({ code: 1, output: "error: still fails" }) // remapped apply
+      .mockResolvedValueOnce({ code: 1, output: "error: context" }) // sanitized
+      .mockResolvedValueOnce({ code: 0, output: "apps/demo-services/src/app.ts" }) // ls-files (remapDiffPaths)
+      .mockResolvedValueOnce({ code: 1, output: "still fails" }) // remapped apply
       .mockResolvedValue({ code: 0, output: "" });
 
-    // access succeeds for the path → the continue branch executes (line 299)
+    // access SUCCEEDS → the continue branch executes (path "exists" in workdir)
     vi.mocked(fs.access).mockResolvedValue(undefined);
-    // rewrite fallback kicks in since applyPatch throws
     vi.mocked(generateFixRewrite).mockResolvedValue(validRewrite);
 
     const result = await autoFixIncident(input);
 
-    // ls-files WAS called (remapDiffPaths was entered)
     expect(execGit).toHaveBeenCalledWith(["ls-files"], expect.any(String));
-    // Result: rewrite fallback or pr_created
     expect(["pr_created", "failed"]).toContain(result.status);
   });
 
-  it("picks best candidate when multiple files match the same basename", async () => {
+  it("picks best candidate when multiple files match the same basename (multi-candidate branch)", async () => {
     mockHappyPath();
 
     const wrongPathDiff = [
       "diff --git a/src/index.ts b/src/index.ts",
       "--- a/src/index.ts",
       "+++ b/src/index.ts",
-      "@@ -1,1 +1,1 @@",
+      "@@ -59,7 +59,7 @@",
+      " const y = 2;",
       "-old",
       "+new",
     ].join("\n");
@@ -1368,11 +1419,9 @@ describe("autoFixIncident — diff path remapping on git apply failure", () => {
     });
 
     vi.mocked(execGit)
-      .mockResolvedValueOnce({ code: 0, output: "" })
-      .mockResolvedValueOnce({ code: 0, output: "" })
-      .mockResolvedValueOnce({ code: 0, output: "" })
+      .mockResolvedValueOnce({ code: 0, output: "" }) // ls-files (repoPath, path grounding)
       .mockResolvedValueOnce({ code: 1, output: "error: No such file" }) // first apply
-      .mockResolvedValueOnce({ code: 1, output: "error: No such file" }) // sanitized retry
+      .mockResolvedValueOnce({ code: 1, output: "error: No such file" }) // sanitized
       // ls-files returns TWO candidates → multi-candidate branch (lines 311-314)
       .mockResolvedValueOnce({
         code: 0,

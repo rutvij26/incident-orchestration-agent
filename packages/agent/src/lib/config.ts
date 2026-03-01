@@ -34,6 +34,7 @@ const ConfigSchema = z.object({
   RAG_CHUNK_SIZE: z.coerce.number().int().positive().default(900),
   RAG_CHUNK_OVERLAP: z.coerce.number().int().nonnegative().default(150),
   RAG_REPO_PATH: z.string().optional(),
+  RAG_REPO_SUBDIR: z.string().optional(),
   RAG_REPO_CACHE_DIR: z.string().default(".agentic/repos"),
   RAG_REPO_REFRESH: z.enum(["pull", "reclone"]).default("pull"),
   AUTO_FIX_MODE: z.enum(["off", "on"]).default("off"),
