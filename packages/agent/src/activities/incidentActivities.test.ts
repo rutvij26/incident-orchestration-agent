@@ -158,6 +158,56 @@ describe("detectIncidents", () => {
   it("returns empty array for empty log input", async () => {
     expect(await detectIncidents([])).toEqual([]);
   });
+
+  it("classifies structured severity:critical logs as critical", async () => {
+    const logs: LogEvent[] = [
+      {
+        timestamp: now,
+        message: JSON.stringify({
+          severity: "critical",
+          type: "null_reference_order_items",
+          route: "/api/orders",
+          error: "TypeError: Cannot read properties of null (reading 'reduce')",
+          msg: "CRITICAL: /api/orders crashed — null reference on items.reduce()",
+        }),
+        labels: {},
+      },
+    ];
+    const incidents = await detectIncidents(logs);
+    expect(incidents[0].incident.severity).toBe("critical");
+    expect(incidents[0].incident.title).toContain("critical");
+    expect(incidents[0].tags).toContain("null_reference_order_items");
+  });
+
+  it("classifies logs with CRITICAL: prefix in message as critical", async () => {
+    const logs: LogEvent[] = [
+      {
+        timestamp: now,
+        message: JSON.stringify({
+          route: "/api/orders",
+          msg: "CRITICAL: service is completely down",
+        }),
+        labels: {},
+      },
+    ];
+    const incidents = await detectIncidents(logs);
+    expect(incidents[0].incident.severity).toBe("critical");
+  });
+
+  it("classifies logs with 'null reference' in message as critical", async () => {
+    const logs: LogEvent[] = [
+      {
+        timestamp: now,
+        message: JSON.stringify({
+          route: "/api/orders",
+          msg: "null reference detected in handler",
+        }),
+        labels: {},
+      },
+    ];
+    const incidents = await detectIncidents(logs);
+    expect(incidents[0].incident.severity).toBe("critical");
+  });
 });
 
 // ─── persistIncidents ───────────────────────────────────────────────────────

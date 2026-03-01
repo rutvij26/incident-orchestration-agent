@@ -15,8 +15,8 @@ Track implementation status for each prioritized milestone.
 
 ### Prompt Architecture Hardening
 
-- [ ] Split prompt into plan → patch → verify loop.
-- [ ] Require file list + anchors from retrieved context for grounding.
+- [x] Split prompt into plan → patch → verify loop.
+- [x] Require file list + anchors from retrieved context for grounding.
 
 ### Sandbox Reliability + Runtime Limits
 

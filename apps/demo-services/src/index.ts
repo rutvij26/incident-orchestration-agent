@@ -50,17 +50,84 @@ async function main(): Promise<void> {
     res.status(401).json({ error: "Unauthorized" });
   });
 
-  if (process.env.SIMULATE_INCIDENTS === "true") {
-    setInterval(() => {
+  // INTENTIONAL CRITICAL BUG: `items` is not null-guarded before `.reduce()`.
+  // When the request body omits `items` (or sends null), this throws:
+  //   TypeError: Cannot read properties of null (reading 'reduce')
+  // Fix: change `items` → `(items ?? [])` on the reduce call.
+  app.post("/api/orders", (req, res) => {
+    try {
+      const { items } = req.body ?? {};
+      const total = (items as Array<{ price: number; qty: number }>).reduce(
+        (sum, item) => sum + item.price * item.qty,
+        0,
+      );
+      logger.info({ total, route: "/api/orders" }, "Order processed");
+      res.json({ ok: true, total });
+    } catch (error) {
       logger.error(
         {
-          type: "error_burst",
+          severity: "critical",
+          type: "null_reference_order_items",
           route: "/api/orders",
-          error_rate: Math.random() * 0.3 + 0.1,
+          error: String(error),
+          impact: "all_orders_failing",
+          error_rate: 1.0,
         },
-        "Synthetic error burst"
+        "CRITICAL: /api/orders crashed — null reference on items.reduce()",
+      );
+      res.status(500).json({ error: "Order processing failed" });
+    }
+  });
+
+  if (process.env.SIMULATE_INCIDENTS === "true") {
+    setInterval(() => {
+      // Simulate the /api/orders null-reference crash that happens in production
+      // when a client sends a request body without the `items` field.
+      logger.error(
+        {
+          severity: "critical",
+          type: "null_reference_order_items",
+          route: "/api/orders",
+          error: "TypeError: Cannot read properties of null (reading 'reduce')",
+          stack: "at Array.reduce (<anonymous>)\n    at app.post (src/index.ts:61:60)",
+          impact: "all_orders_failing",
+          error_rate: Math.random() * 0.2 + 0.8,
+        },
+        "CRITICAL: /api/orders crashed — null reference on items.reduce()",
       );
     }, 15000);
+  }
+
+  // Flood logs with critical-severity entries to trigger the incident agent.
+  // Mirrors exactly what happens when /api/orders is called without a body.
+  // Toggle with: SIMULATE_CRITICAL_BUG=true
+  if (process.env.SIMULATE_CRITICAL_BUG === "true") {
+    logger.warn(
+      { route: "/api/orders" },
+      "Critical bug simulation enabled — order processing is completely down",
+    );
+    setInterval(() => {
+      try {
+        // Reproduces the production code path: null items → .reduce() throws
+        const items: unknown = null;
+        (items as Array<{ price: number; qty: number }>).reduce(
+          (sum, item) => sum + item.price * item.qty,
+          0,
+        );
+      } catch (error) {
+        logger.error(
+          {
+            severity: "critical",
+            type: "null_reference_order_items",
+            route: "/api/orders",
+            error: String(error),
+            impact: "all_orders_failing",
+            error_rate: 1.0,
+          },
+          "CRITICAL: /api/orders crashed — null reference on items.reduce()",
+        );
+      }
+    }, 3000);
   }
 
   const port = Number(process.env.PORT ?? 4000);

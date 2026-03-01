@@ -41,7 +41,22 @@ function extractSignal(log: LogEvent): {
 
   const type = typeof parsed?.type === "string" ? parsed.type : "";
   const route = typeof parsed?.route === "string" ? parsed.route : "unknown";
+  const structuredSeverity =
+    typeof parsed?.severity === "string" ? parsed.severity : "";
 
+  // Structured logs that explicitly declare severity:critical take highest priority.
+  // This covers null_reference_order_items and any future critical log types.
+  if (
+    structuredSeverity === "critical" ||
+    message.includes("null reference") ||
+    message.includes("CRITICAL:")
+  ) {
+    return {
+      key: `critical:${route}`,
+      severity: "critical",
+      label: type || "critical_error",
+    };
+  }
   if (type === "error_burst" || message.includes("Synthetic error burst")) {
     return {
       key: `error_burst:${route}`,
