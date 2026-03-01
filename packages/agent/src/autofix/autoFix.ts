@@ -1,15 +1,24 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { getConfig } from "../lib/config.js";
 import { logger } from "../lib/logger.js";
 import type { Incident, IncidentSummary } from "../lib/types.js";
-import { generateFixProposal, generateFixRewrite } from "../lib/llm.js";
+import {
+  assessFixability,
+  generateFixProposal,
+  generateFixRewrite,
+} from "../lib/llm.js";
 import { retrieveRepoContext } from "../rag/retrieveRepo.js";
 import { runInSandbox } from "../tools/dockerSandbox.js";
 import { createIssueComment, createPullRequest } from "../lib/github.js";
 import { resolveRepoTarget } from "../lib/repoTarget.js";
 import { getCachedRepoPath } from "../rag/repoCache.js";
+import {
+  getRecentAutoFixAttempts,
+  recordAutoFixAttempt,
+} from "../memory/postgres.js";
+import { severityRank } from "../lib/severity.js";
+import { execGit } from "../lib/git.js";
 
 type AutoFixInput = {
   incident: Incident;
@@ -39,20 +48,6 @@ const IGNORED_COPY_DIRS = new Set([
 const MAX_DIFF_BYTES = 200_000;
 const MAX_FILE_BYTES = 500_000;
 
-function severityRank(severity: string): number {
-  switch (severity) {
-    case "critical":
-      return 4;
-    case "high":
-      return 3;
-    case "medium":
-      return 2;
-    case "low":
-    default:
-      return 1;
-  }
-}
-
 function shouldAutoFix(severity: string): boolean {
   const config = getConfig();
   if (config.AUTO_FIX_MODE !== "on") {
@@ -64,6 +59,42 @@ function shouldAutoFix(severity: string): boolean {
   return (
     severityRank(severity) >= severityRank(config.AUTO_FIX_SEVERITY)
   );
+}
+
+function heuristicFixabilityScore(params: {
+  severity: string;
+  repoContextLength: number;
+  summaryConfidence?: number | null;
+}): number {
+  const severityBonus =
+    severityRank(params.severity) / 4; // 0.25 .. 1.0
+  const ragBonus = Math.min(1, params.repoContextLength / 6) * 0.4;
+  const confidenceBonus = (params.summaryConfidence ?? 0.5) * 0.35;
+  return Math.min(1, 0.35 + severityBonus * 0.25 + ragBonus + confidenceBonus);
+}
+
+async function computeFixabilityScore(params: {
+  incident: Incident;
+  repoContext: Array<{ path: string; content: string }>;
+  summaryConfidence?: number | null;
+}): Promise<{ score: number; reason?: string }> {
+  const heuristic = heuristicFixabilityScore({
+    severity: params.incident.severity,
+    repoContextLength: params.repoContext.length,
+    summaryConfidence: params.summaryConfidence,
+  });
+  const assessment = await assessFixability({
+    incident: params.incident,
+    repoContext: params.repoContext,
+  });
+  if (!assessment) {
+    return { score: heuristic };
+  }
+  const combined = 0.6 * assessment.fixability_score + 0.4 * heuristic;
+  return {
+    score: Math.min(1, Math.max(0, combined)),
+    reason: assessment.reason,
+  };
 }
 
 function normalizeDiff(diff: string): string {
@@ -220,26 +251,6 @@ function extractDiffFiles(diff: string): string[] {
   return files;
 }
 
-async function execGit(
-  args: string[],
-  cwd: string
-): Promise<{ code: number; output: string }> {
-  return new Promise((resolve) => {
-    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
-    let output = "";
-    child.stdout.on("data", (data) => {
-      output += data.toString();
-    });
-    child.stderr.on("data", (data) => {
-      output += data.toString();
-    });
-    child.on("close", (code) => resolve({ code: code ?? 1, output }));
-    child.on("error", (error) =>
-      resolve({ code: 1, output: String(error) })
-    );
-  });
-}
-
 async function copyRepo(source: string, target: string): Promise<void> {
   await fs.cp(source, target, {
     recursive: true,
@@ -331,6 +342,7 @@ export async function autoFixIncident(
   input: AutoFixInput
 ): Promise<AutoFixResult> {
   const config = getConfig();
+  let recordedFixabilityScore: number | undefined;
   try {
     logger.info("Auto-fix evaluation", {
       incidentId: input.incident.id,
@@ -348,12 +360,49 @@ export async function autoFixIncident(
       return { status: "skipped", reason: "auto_fix_disabled_or_severity" };
     }
 
+    const skipAfterFailures = config.AUTO_FIX_SKIP_AFTER_FAILURES;
+    if (skipAfterFailures > 0) {
+      try {
+        const recent = await getRecentAutoFixAttempts({
+          incidentId: input.incident.id,
+          issueNumber: input.issueNumber,
+          limit: 20,
+        });
+        const failureCount = recent.filter((r) => r.outcome === "failed").length;
+        if (failureCount >= skipAfterFailures) {
+          logger.info("Auto-fix skipped: repeated failures", {
+            incidentId: input.incident.id,
+            issueNumber: input.issueNumber,
+            failureCount,
+          });
+          return {
+            status: "skipped",
+            reason: "repeated_failures",
+          };
+        }
+      } catch (err) {
+        logger.warn("Auto-fix: could not check past attempts", {
+          error: String(err),
+        });
+      }
+    }
+
     const autoFixPath = config.AUTO_FIX_REPO_PATH?.trim();
     const repoPath = autoFixPath ? autoFixPath : await getCachedRepoPath();
     if (!repoPath) {
       logger.warn("Auto-fix failed: repo path missing", {
         incidentId: input.incident.id,
       });
+      try {
+        await recordAutoFixAttempt({
+          incidentId: input.incident.id,
+          issueNumber: input.issueNumber,
+          outcome: "failed",
+          reason: "AUTO_FIX_REPO_PATH not configured",
+        });
+      } catch {
+        /* ignore */
+      }
       return { status: "failed", reason: "AUTO_FIX_REPO_PATH not configured" };
     }
     logger.info("Auto-fix repo resolved", {
@@ -378,6 +427,38 @@ export async function autoFixIncident(
       path: item.path,
       content: item.content,
     }));
+
+    const { score: fixabilityScore, reason: fixabilityReason } =
+      await computeFixabilityScore({
+        incident: input.incident,
+        repoContext: contextPayload,
+        summaryConfidence: input.summary?.confidence,
+      });
+    const minScore = config.AUTO_FIX_MIN_SCORE;
+    if (fixabilityScore < minScore) {
+      logger.info("Auto-fix skipped: fixability below threshold", {
+        incidentId: input.incident.id,
+        fixabilityScore,
+        minScore,
+        fixabilityReason,
+      });
+      try {
+        await recordAutoFixAttempt({
+          incidentId: input.incident.id,
+          issueNumber: input.issueNumber,
+          outcome: "skipped",
+          reason: "fixability_below_threshold",
+          fixabilityScore,
+        });
+      } catch {
+        // ignore persistence errors
+      }
+      return {
+        status: "skipped",
+        reason: "fixability_below_threshold",
+      };
+    }
+    recordedFixabilityScore = fixabilityScore;
 
     const buildProposal = async () =>
       generateFixProposal({
@@ -430,6 +511,17 @@ export async function autoFixIncident(
           input.issueNumber,
           "Auto-fix failed: diff too large."
         );
+        try {
+          await recordAutoFixAttempt({
+            incidentId: input.incident.id,
+            issueNumber: input.issueNumber,
+            outcome: "failed",
+            reason: "diff_too_large",
+            fixabilityScore: recordedFixabilityScore,
+          });
+        } catch {
+          /* ignore */
+        }
         return { status: "failed", reason: "diff_too_large" };
       }
       if (status === "invalid_diff") {
@@ -444,6 +536,17 @@ export async function autoFixIncident(
       });
       if (!rewrite) {
         await commentInvalidDiff(input.issueNumber, diff || "No diff produced.");
+        try {
+          await recordAutoFixAttempt({
+            incidentId: input.incident.id,
+            issueNumber: input.issueNumber,
+            outcome: "failed",
+            reason: "invalid_diff",
+            fixabilityScore: recordedFixabilityScore,
+          });
+        } catch {
+          /* ignore */
+        }
         return { status: "failed", reason: "invalid_diff" };
       }
       const rewriteCheck = await validateRewriteFiles(repoPath, rewrite.files);
@@ -452,6 +555,17 @@ export async function autoFixIncident(
           input.issueNumber,
           `Auto-fix failed: rewrite validation failed (${rewriteCheck.reason})`
         );
+        try {
+          await recordAutoFixAttempt({
+            incidentId: input.incident.id,
+            issueNumber: input.issueNumber,
+            outcome: "failed",
+            reason: "rewrite_invalid",
+            fixabilityScore: recordedFixabilityScore,
+          });
+        } catch {
+          /* ignore */
+        }
         return { status: "failed", reason: "rewrite_invalid" };
       }
       fixSummary = rewrite.summary;
@@ -472,6 +586,17 @@ export async function autoFixIncident(
         input.issueNumber,
         `Auto-fix blocked: unsafe file in diff (${unsafeFile}).`
       );
+      try {
+        await recordAutoFixAttempt({
+          incidentId: input.incident.id,
+          issueNumber: input.issueNumber,
+          outcome: "failed",
+          reason: "unsafe_files",
+          fixabilityScore: recordedFixabilityScore,
+        });
+      } catch {
+        /* ignore */
+      }
       return { status: "failed", reason: "unsafe_files" };
     }
 
@@ -501,6 +626,17 @@ export async function autoFixIncident(
           input.issueNumber,
           `Auto-fix failed: ${String(error)}`
         );
+        try {
+          await recordAutoFixAttempt({
+            incidentId: input.incident.id,
+            issueNumber: input.issueNumber,
+            outcome: "failed",
+            reason: "invalid_diff",
+            fixabilityScore: recordedFixabilityScore,
+          });
+        } catch {
+          /* ignore */
+        }
         return { status: "failed", reason: "invalid_diff" };
       }
       const rewriteCheck = await validateRewriteFiles(repoPath, rewrite.files);
@@ -509,6 +645,17 @@ export async function autoFixIncident(
           input.issueNumber,
           `Auto-fix failed: rewrite validation failed (${rewriteCheck.reason})`
         );
+        try {
+          await recordAutoFixAttempt({
+            incidentId: input.incident.id,
+            issueNumber: input.issueNumber,
+            outcome: "failed",
+            reason: "rewrite_invalid",
+            fixabilityScore: recordedFixabilityScore,
+          });
+        } catch {
+          /* ignore */
+        }
         return { status: "failed", reason: "rewrite_invalid" };
       }
       fixSummary = rewrite.summary;
@@ -565,6 +712,17 @@ export async function autoFixIncident(
             "```",
           ].join("\n")
         );
+        try {
+          await recordAutoFixAttempt({
+            incidentId: input.incident.id,
+            issueNumber: input.issueNumber,
+            outcome: "failed",
+            reason: "sandbox_install_failed",
+            fixabilityScore: recordedFixabilityScore,
+          });
+        } catch {
+          /* ignore */
+        }
         return { status: "failed", reason: "sandbox_install_failed" };
       }
     }
@@ -600,6 +758,17 @@ export async function autoFixIncident(
           "```",
         ].join("\n")
       );
+      try {
+        await recordAutoFixAttempt({
+          incidentId: input.incident.id,
+          issueNumber: input.issueNumber,
+          outcome: "failed",
+          reason: "sandbox_validation_failed",
+          fixabilityScore: recordedFixabilityScore,
+        });
+      } catch {
+        /* ignore */
+      }
       return { status: "failed", reason: "sandbox_validation_failed" };
     }
     logger.info("Auto-fix sandbox validation passed", {
@@ -615,6 +784,17 @@ export async function autoFixIncident(
         input.issueNumber,
         "Auto-fix aborted: repo has uncommitted changes."
       );
+      try {
+        await recordAutoFixAttempt({
+          incidentId: input.incident.id,
+          issueNumber: input.issueNumber,
+          outcome: "failed",
+          reason: "dirty_repo",
+          fixabilityScore: recordedFixabilityScore,
+        });
+      } catch {
+        /* ignore */
+      }
       return { status: "failed", reason: "dirty_repo" };
     }
 
@@ -633,6 +813,17 @@ export async function autoFixIncident(
         input.issueNumber,
         `Auto-fix failed: git checkout base error\n\n\`\`\`\n${checkoutBase.output}\n\`\`\``
       );
+      try {
+        await recordAutoFixAttempt({
+          incidentId: input.incident.id,
+          issueNumber: input.issueNumber,
+          outcome: "failed",
+          reason: "git_checkout_base_failed",
+          fixabilityScore: recordedFixabilityScore,
+        });
+      } catch {
+        /* ignore */
+      }
       return { status: "failed", reason: "git_checkout_base_failed" };
     }
 
@@ -656,6 +847,17 @@ export async function autoFixIncident(
         input.issueNumber,
         `Auto-fix failed: git checkout error\n\n\`\`\`\n${checkout.output}\n\`\`\``
       );
+      try {
+        await recordAutoFixAttempt({
+          incidentId: input.incident.id,
+          issueNumber: input.issueNumber,
+          outcome: "failed",
+          reason: "git_checkout_failed",
+          fixabilityScore: recordedFixabilityScore,
+        });
+      } catch {
+        /* ignore */
+      }
       return { status: "failed", reason: "git_checkout_failed" };
     }
 
@@ -681,6 +883,17 @@ export async function autoFixIncident(
         input.issueNumber,
         `Auto-fix failed: git commit error\n\n\`\`\`\n${commit.output}\n\`\`\``
       );
+      try {
+        await recordAutoFixAttempt({
+          incidentId: input.incident.id,
+          issueNumber: input.issueNumber,
+          outcome: "failed",
+          reason: "git_commit_failed",
+          fixabilityScore: recordedFixabilityScore,
+        });
+      } catch {
+        /* ignore */
+      }
       return { status: "failed", reason: "git_commit_failed" };
     }
 
@@ -693,6 +906,17 @@ export async function autoFixIncident(
         input.issueNumber,
         `Auto-fix failed: git push error\n\n\`\`\`\n${push.output}\n\`\`\``
       );
+      try {
+        await recordAutoFixAttempt({
+          incidentId: input.incident.id,
+          issueNumber: input.issueNumber,
+          outcome: "failed",
+          reason: "git_push_failed",
+          fixabilityScore: recordedFixabilityScore,
+        });
+      } catch {
+        /* ignore */
+      }
       return { status: "failed", reason: "git_push_failed" };
     }
 
@@ -741,6 +965,17 @@ export async function autoFixIncident(
         input.issueNumber,
         `Auto-fix failed to open PR: ${pr.reason ?? "unknown error"}`
       );
+      try {
+        await recordAutoFixAttempt({
+          incidentId: input.incident.id,
+          issueNumber: input.issueNumber,
+          outcome: "failed",
+          reason: "pr_create_failed",
+          fixabilityScore: recordedFixabilityScore,
+        });
+      } catch {
+        /* ignore */
+      }
       return { status: "failed", reason: "pr_create_failed" };
     }
 
@@ -753,6 +988,16 @@ export async function autoFixIncident(
       `Auto-fix PR created: ${pr.url}`
     );
 
+    try {
+      await recordAutoFixAttempt({
+        incidentId: input.incident.id,
+        issueNumber: input.issueNumber,
+        outcome: "pr_created",
+        fixabilityScore: recordedFixabilityScore,
+      });
+    } catch {
+      /* ignore */
+    }
     return { status: "pr_created", prUrl: pr.url };
   } catch (error) {
     logger.warn("Auto-fix failed: unexpected error", {
@@ -766,6 +1011,17 @@ export async function autoFixIncident(
       );
     } catch {
       // Ignore comment failures.
+    }
+    try {
+      await recordAutoFixAttempt({
+        incidentId: input.incident.id,
+        issueNumber: input.issueNumber,
+        outcome: "failed",
+        reason: "unexpected_error",
+        fixabilityScore: recordedFixabilityScore,
+      });
+    } catch {
+      /* ignore */
     }
     return { status: "failed", reason: "unexpected_error" };
   }

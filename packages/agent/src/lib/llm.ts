@@ -37,6 +37,14 @@ const FixRewriteSchema = z.object({
     )
     .min(1),
 });
+
+const FixabilitySchema = z.object({
+  fixability_score: z.number().min(0).max(1),
+  reason: z.string().min(1),
+});
+
+export type FixabilityAssessment = z.infer<typeof FixabilitySchema>;
+
 let openaiClient: OpenAI | null = null;
 let anthropicClient: Anthropic | null = null;
 let geminiClient: GoogleGenerativeAI | null = null;
@@ -309,6 +317,107 @@ function buildFixRewritePrompt(input: {
   ].join("\n");
 }
 
+function buildFixabilityPrompt(input: {
+  incident: Incident;
+  repoContext: Array<{ path: string; content: string }>;
+}): string {
+  return [
+    "You are an SRE assessing whether an incident can be fixed automatically with a code change.",
+    "Return JSON only with this exact schema:",
+    "{",
+    '  "fixability_score": 0.0,  // 0-1: how confident you are a safe, minimal code fix is feasible',
+    '  "reason": "string"',
+    "}",
+    "",
+    "Rules:",
+    "- Output valid JSON only (no markdown).",
+    "- fixability_score: 0 = not fixable or too risky, 1 = high confidence a small code change will fix it.",
+    "- Consider: do we have enough repo context? Is the root cause likely in code we can change?",
+    "",
+    "Incident:",
+    JSON.stringify(
+      {
+        title: input.incident.title,
+        severity: input.incident.severity,
+        evidence: input.incident.evidence.slice(0, 5),
+      },
+      null,
+      2
+    ),
+    "",
+    "Repo context (path + first 120 chars of content):",
+    JSON.stringify(
+      input.repoContext.map((c) => ({
+        path: c.path,
+        preview: c.content.slice(0, 120).replace(/\s+/g, " ").trim(),
+      }))
+    ),
+  ].join("\n");
+}
+
+export async function assessFixability(input: {
+  incident: Incident;
+  repoContext: Array<{ path: string; content: string }>;
+}): Promise<FixabilityAssessment | null> {
+  const config = getConfig();
+  const resolved = resolveProvider(
+    config.LLM_PROVIDER,
+    config.OPENAI_API_KEY,
+    config.ANTHROPIC_API_KEY,
+    config.GEMINI_API_KEY
+  );
+
+  if (!resolved) {
+    return null;
+  }
+
+  try {
+    const prompt = buildFixabilityPrompt(input);
+    let raw = "";
+
+    if (resolved.provider === "openai") {
+      if (!openaiClient) {
+        openaiClient = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+      }
+      const response = await openaiClient.chat.completions.create({
+        model: resolved.model,
+        temperature: 0.1,
+        max_tokens: 256,
+        messages: [
+          { role: "system", content: "Return JSON only." },
+          { role: "user", content: prompt },
+        ],
+      });
+      raw = response.choices[0]?.message?.content ?? "";
+    } else if (resolved.provider === "anthropic") {
+      if (!anthropicClient) {
+        anthropicClient = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+      }
+      const response = await anthropicClient.messages.create({
+        model: resolved.model,
+        max_tokens: 256,
+        temperature: 0.1,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const block = response.content.find((item) => item.type === "text");
+      raw = block?.text ?? "";
+    } else {
+      if (!geminiClient) {
+        geminiClient = new GoogleGenerativeAI(config.GEMINI_API_KEY ?? "");
+      }
+      const model = geminiClient.getGenerativeModel({ model: resolved.model });
+      const response = await model.generateContent(prompt);
+      raw = response.response.text();
+    }
+
+    const json = extractJson(raw);
+    return FixabilitySchema.parse(JSON.parse(json));
+  } catch (error) {
+    logger.warn("Fixability assessment failed", { error: String(error) });
+    return null;
+  }
+}
+
 export async function generateFixProposal(input: {
   incident: Incident;
   repoContext: Array<{ path: string; content: string }>;
@@ -442,4 +551,5 @@ export const __test__ = {
   SummarySchema,
   FixSchema,
   FixRewriteSchema,
+  FixabilitySchema,
 };

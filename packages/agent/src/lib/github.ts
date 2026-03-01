@@ -1,6 +1,7 @@
 import { Octokit } from "@octokit/rest";
 import { getConfig } from "./config.js";
 import { resolveRepoTarget } from "./repoTarget.js";
+import { logger } from "./logger.js";
 
 export type IssueInput = {
   title: string;
@@ -26,19 +27,23 @@ export async function createIssue(input: IssueInput): Promise<IssueResult> {
   }
 
   const octokit = new Octokit({ auth: GITHUB_TOKEN });
-  const response = await octokit.issues.create({
-    owner: target.owner,
-    repo: target.repo,
-    title: input.title,
-    body: input.body,
-    labels: input.labels,
-  });
-
-  return {
-    created: true,
-    url: response.data.html_url,
-    number: response.data.number,
-  };
+  try {
+    const response = await octokit.issues.create({
+      owner: target.owner,
+      repo: target.repo,
+      title: input.title,
+      body: input.body,
+      labels: input.labels,
+    });
+    return {
+      created: true,
+      url: response.data.html_url,
+      number: response.data.number,
+    };
+  } catch (error) {
+    logger.warn("GitHub createIssue failed", { error: String(error) });
+    return { created: false, reason: String(error) };
+  }
 }
 
 export async function createIssueComment(
@@ -51,13 +56,18 @@ export async function createIssueComment(
     return { created: false, reason: "Missing GitHub configuration" };
   }
   const octokit = new Octokit({ auth: GITHUB_TOKEN });
-  const response = await octokit.issues.createComment({
-    owner: target.owner,
-    repo: target.repo,
-    issue_number: issueNumber,
-    body,
-  });
-  return { created: true, url: response.data.html_url };
+  try {
+    const response = await octokit.issues.createComment({
+      owner: target.owner,
+      repo: target.repo,
+      issue_number: issueNumber,
+      body,
+    });
+    return { created: true, url: response.data.html_url };
+  } catch (error) {
+    logger.warn("GitHub createIssueComment failed", { error: String(error) });
+    return { created: false, reason: String(error) };
+  }
 }
 
 export async function createPullRequest(input: {
@@ -74,28 +84,33 @@ export async function createPullRequest(input: {
     return { created: false, reason: "Missing GitHub configuration" };
   }
   const octokit = new Octokit({ auth: GITHUB_TOKEN });
-  const response = await octokit.pulls.create({
-    owner: target.owner,
-    repo: target.repo,
-    title: input.title,
-    body: input.body,
-    head: input.head,
-    base: input.base,
-    draft: input.draft ?? false,
-  });
+  try {
+    const response = await octokit.pulls.create({
+      owner: target.owner,
+      repo: target.repo,
+      title: input.title,
+      body: input.body,
+      head: input.head,
+      base: input.base,
+      draft: input.draft ?? false,
+    });
 
-  if (input.labels && input.labels.length > 0) {
-    try {
-      await octokit.issues.addLabels({
-        owner: target.owner,
-        repo: target.repo,
-        issue_number: response.data.number,
-        labels: input.labels,
-      });
-    } catch {
-      // Ignore label failures to avoid blocking PR creation.
+    if (input.labels && input.labels.length > 0) {
+      try {
+        await octokit.issues.addLabels({
+          owner: target.owner,
+          repo: target.repo,
+          issue_number: response.data.number,
+          labels: input.labels,
+        });
+      } catch {
+        // Ignore label failures to avoid blocking PR creation.
+      }
     }
-  }
 
-  return { created: true, url: response.data.html_url };
+    return { created: true, url: response.data.html_url };
+  } catch (error) {
+    logger.warn("GitHub createPullRequest failed", { error: String(error) });
+    return { created: false, reason: String(error) };
+  }
 }

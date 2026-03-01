@@ -7,7 +7,6 @@ import "./lib/env.js";
 const CONNECTION_TIMEOUT_MS = 15000;
 const WORKFLOW_TIMEOUT_MS = 120000;
 const LOOKBACK_MINUTES = 15;
-const DEFAULT_QUERY = '{job="demo-services"}';
 
 async function withTimeout<T>(
   promise: Promise<T>,
@@ -31,13 +30,13 @@ async function withTimeout<T>(
  * Run the incident workflow once.
  */
 async function runOnce(): Promise<void> {
-  const { TEMPORAL_ADDRESS, AUTO_ESCALATE_FROM } = getConfig();
+  const { TEMPORAL_ADDRESS, AUTO_ESCALATE_FROM, LOKI_QUERY } = getConfig();
 
   logger.info("Starting workflow run", {
     temporalAddress: TEMPORAL_ADDRESS,
     autoEscalateFrom: AUTO_ESCALATE_FROM,
     lookbackMinutes: LOOKBACK_MINUTES,
-    query: DEFAULT_QUERY,
+    query: LOKI_QUERY,
   });
 
   /**
@@ -75,7 +74,7 @@ async function runOnce(): Promise<void> {
       args: [
         {
           lookbackMinutes: LOOKBACK_MINUTES,
-          query: DEFAULT_QUERY,
+          query: LOKI_QUERY,
           autoEscalateFrom: AUTO_ESCALATE_FROM,
         },
       ],

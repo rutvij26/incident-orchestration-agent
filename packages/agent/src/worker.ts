@@ -41,6 +41,14 @@ async function runWorker(): Promise<void> {
   });
 
   logger.info("Temporal worker started", { taskQueue: "incident-orchestration" });
+
+  const shutdown = () => {
+    logger.info("Shutdown signal received, draining worker...");
+    worker.shutdown();
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
+
   await worker.run();
 }
 

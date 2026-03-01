@@ -3,6 +3,7 @@ import { z } from "zod";
 const ConfigSchema = z.object({
   TEMPORAL_ADDRESS: z.string().default("localhost:7233"),
   LOKI_URL: z.string().default("http://localhost:3100"),
+  LOKI_QUERY: z.string().default('{job="demo-services"}'),
   GITHUB_TOKEN: z.string().optional(),
   GITHUB_OWNER: z.string().optional(),
   GITHUB_REPO: z.string().optional(),
@@ -45,6 +46,8 @@ const ConfigSchema = z.object({
   AUTO_FIX_INSTALL_COMMAND: z.string().default("npm install --include=dev"),
   AUTO_FIX_SANDBOX_IMAGE: z.string().default("node:20-slim"),
   GITHUB_DEFAULT_BRANCH: z.string().default("main"),
+  AUTO_FIX_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.5),
+  AUTO_FIX_SKIP_AFTER_FAILURES: z.coerce.number().int().min(0).default(1),
   AUTO_ESCALATE_FROM: z
     .enum(["low", "medium", "high", "critical", "none"])
     .default("high"),

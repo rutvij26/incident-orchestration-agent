@@ -76,7 +76,10 @@ Optional auto-fix PRs:
 - `AUTO_FIX_INSTALL_COMMAND` (default `npm install --include=dev`)
 - `AUTO_FIX_SANDBOX_IMAGE` (default `node:20-slim`)
 - `GITHUB_DEFAULT_BRANCH` (default `main`)
-Note: auto-fix runs only when incidents are escalated to issues. Set `AUTO_ESCALATE_FROM=low` to auto-fix all severities.
+- `AUTO_FIX_MIN_SCORE` (0–1, default `0.5`): minimum fixability score (LLM + heuristics) to attempt auto-fix.
+- `AUTO_FIX_SKIP_AFTER_FAILURES` (default `1`): skip auto-fix for the same incident+issue after this many failed attempts.
+
+Note: auto-fix runs only when incidents are escalated to issues. Set `AUTO_ESCALATE_FROM=low` to auto-fix all severities. Attempts and outcomes are stored in Postgres (`auto_fix_attempts` table) to avoid repeated bad fixes.
 
 ### Docker auto-fix requirements
 - Mount the Docker socket into the agent container for sandboxed tests (`/var/run/docker.sock`).
@@ -101,19 +104,21 @@ If your org already runs these services:
 - Point `POSTGRES_URL` to your memory DB
 - Ensure logs are shipped with a `job` label that you can query
 
-## Step 4: Update the Loki query
+## Step 4: Set your Loki query
 
-The agent currently queries:
-
-```
-{job="demo-services"}
-```
-
-Update the query in `packages/agent/src/run.ts` to match your labels, for example:
+Set `LOKI_QUERY` in your `.env` to match your log stream labels. The default targets the bundled demo services:
 
 ```
-{job="api-gateway"} |= "ERROR"
+LOKI_QUERY={job="demo-services"}
 ```
+
+For production, change it to your own labels, for example:
+
+```
+LOKI_QUERY={job="api-gateway"} |= "ERROR"
+```
+
+No code changes are required.
 
 ## Step 5: Run the worker and trigger a scan
 

@@ -151,7 +151,7 @@ export async function hasRepoEmbeddings(repoKey: string): Promise<boolean> {
       `,
       [repoKey]
     );
-    return response.rowCount > 0;
+    return (response.rowCount ?? 0) > 0;
   } finally {
     client.release();
   }
