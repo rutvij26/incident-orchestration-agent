@@ -52,12 +52,17 @@ const ConfigSchema = z.object({
   AUTO_ESCALATE_FROM: z
     .enum(["low", "medium", "high", "critical", "none"])
     .default("high"),
+  // Connector overrides (optional – fall back to LLM_PROVIDER / EMBEDDING_PROVIDER when absent)
+  LLM_CONNECTORS: z.string().optional(),
+  EMBEDDING_CONNECTOR: z.string().optional(),
 });
 
-let cachedConfig: z.infer<typeof ConfigSchema> | null = null;
+export type Config = z.infer<typeof ConfigSchema>;
+
+let cachedConfig: Config | null = null;
 
 /** Gets the configuration from the environment. */
-export function getConfig(): z.infer<typeof ConfigSchema> {
+export function getConfig(): Config {
   // local cache
   if (cachedConfig) {
     return cachedConfig;
