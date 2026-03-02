@@ -1,10 +1,8 @@
-import OpenAI from "openai";
-import Anthropic from "@anthropic-ai/sdk";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { z } from "zod";
 import { getConfig } from "./config.js";
 import { logger } from "./logger.js";
 import type { Incident, IncidentSummary, IncidentSeverity } from "./types.js";
+import { createLlmConnector } from "../connectors/registry.js";
 
 type LlmProvider = "auto" | "openai" | "anthropic" | "gemini";
 
@@ -59,10 +57,6 @@ const FixVerifySchema = z.object({
 export type FixabilityAssessment = z.infer<typeof FixabilitySchema>;
 export type FixPlan = z.infer<typeof FixPlanSchema>;
 export type FixVerify = z.infer<typeof FixVerifySchema>;
-
-let openaiClient: OpenAI | null = null;
-let anthropicClient: Anthropic | null = null;
-let geminiClient: GoogleGenerativeAI | null = null;
 
 function buildPrompt(incident: Incident): string {
   return [
@@ -161,43 +155,8 @@ async function callLlm(
   resolved: { provider: "openai" | "anthropic" | "gemini"; model: string },
   opts: { maxTokens: number; temperature: number },
 ): Promise<string> {
-  const config = getConfig();
-  if (resolved.provider === "openai") {
-    if (!openaiClient) {
-      openaiClient = new OpenAI({ apiKey: config.OPENAI_API_KEY });
-    }
-    const response = await openaiClient.chat.completions.create({
-      model: resolved.model,
-      temperature: opts.temperature,
-      max_tokens: opts.maxTokens,
-      messages: [
-        { role: "system", content: "Return JSON only." },
-        { role: "user", content: prompt },
-      ],
-    });
-    return response.choices[0]?.message?.content ?? "";
-  }
-  if (resolved.provider === "anthropic") {
-    if (!anthropicClient) {
-      anthropicClient = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
-    }
-    const response = await anthropicClient.messages.create({
-      model: resolved.model,
-      max_tokens: opts.maxTokens,
-      temperature: opts.temperature,
-      messages: [{ role: "user", content: prompt }],
-    });
-    const block = response.content.find((item) => item.type === "text");
-    return block?.text ?? "";
-  }
-  // gemini
-  if (!geminiClient) {
-    /* v8 ignore next */
-    geminiClient = new GoogleGenerativeAI(config.GEMINI_API_KEY ?? "");
-  }
-  const model = geminiClient.getGenerativeModel({ model: resolved.model });
-  const response = await model.generateContent(prompt);
-  return response.response.text();
+  const connector = createLlmConnector(resolved, getConfig());
+  return connector.complete(prompt, opts);
 }
 
 function resolvedProvider() {

@@ -27,26 +27,27 @@ Track implementation status for each prioritized milestone.
 
 ---
 
-### Milestone 4 — Connector Foundation + LLM / Embedding Connectors
+### Milestone 4 — Connector Foundation + LLM / Embedding Connectors ✅
 
 Establish the `connectors/` folder, multi-connector helpers, and migrate the already-partially-abstracted LLM and embedding providers.
 
-- [ ] Create `packages/agent/src/connectors/registry.ts` with resolver functions and helpers:
+- [x] Create `packages/agent/src/connectors/registry.ts` with resolver functions and helpers:
   - `fanOut()` — parallel fire-and-forget for notifications / issue creation.
   - `withFallback()` — ordered fallback chain for LLM calls.
   - `aggregateLogs()` — parallel query + deduplicate for source connectors.
-- [ ] Create `connectors/llm/interface.ts` (`LlmConnector`) and migrate providers:
+- [x] Create `connectors/llm/interface.ts` (`LlmConnector`) and migrate providers:
   - `connectors/llm/openai.ts`, `connectors/llm/anthropic.ts`, `connectors/llm/gemini.ts`.
-- [ ] Create `connectors/embedding/interface.ts` (`EmbeddingConnector`) and migrate:
+- [x] Create `connectors/embedding/interface.ts` (`EmbeddingConnector`) and migrate:
   - `connectors/embedding/openai.ts`, `connectors/embedding/gemini.ts`.
-- [ ] Replace internal `resolveProvider()` / dispatch logic in `lib/llm.ts` and `lib/embeddings.ts` with registry calls.
-- [ ] Rename `LLM_PROVIDER` → `LLM_CONNECTORS`, `EMBEDDING_PROVIDER` → `EMBEDDING_CONNECTOR` (with deprecation aliases).
+- [x] Replace internal dispatch logic in `lib/llm.ts` and `lib/embeddings.ts` with registry calls (`createLlmConnector`, `createEmbeddingConnector`).
+- [x] Add `LLM_CONNECTORS` (comma-separated fallback chain) and `EMBEDDING_CONNECTOR` as optional overrides; `LLM_PROVIDER` / `EMBEDDING_PROVIDER` remain as backward-compatible defaults.
+- [x] Create `connectors/source/interface.ts` stub (`SourceConnector`) ready for Milestone 5.
 
 ---
 
 ### Milestone 5 — Source Connectors
 
-- [ ] Create `connectors/source/interface.ts` (`SourceConnector`).
+- [x] Create `connectors/source/interface.ts` (`SourceConnector`).
 - [ ] Migrate `lib/loki.ts` → `connectors/source/loki.ts`.
 - [ ] Update `incidentActivities.fetchRecentLogs` to call `aggregateLogs()` instead of `queryLoki` directly.
 - [ ] Add `SOURCE_CONNECTORS=loki` to config and `.env.example`.
@@ -146,6 +147,7 @@ The "Jarvis moment": the agent can take immediate live infrastructure actions, n
 Capstone milestone. A self-hosted Next.js portal + REST/WebSocket API that makes the entire agent accessible to any org without touching config files or CLIs. Built last so every button calls something that already works in the backend.
 
 **New packages:**
+
 - `apps/portal/` — Next.js frontend.
 - `packages/api/` — REST + WebSocket server (bridge between portal, Postgres, Temporal, and connector registry).
 
@@ -160,6 +162,7 @@ Capstone milestone. A self-hosted Next.js portal + REST/WebSocket API that makes
 - [ ] **Metrics** — fix success rate by incident type, avg MTTR, LLM cost per run, connector health (powered by Milestone 14 data).
 
 **API routes:**
+
 - [ ] `GET/POST /api/connectors` — read and update connector config.
 - [ ] `GET /api/incidents` — incident feed from Postgres.
 - [ ] `GET/POST /api/approvals` — pending fixes; POST unblocks Temporal approval signal.
@@ -169,5 +172,6 @@ Capstone milestone. A self-hosted Next.js portal + REST/WebSocket API that makes
 - [ ] WebSocket `/ws/feed` — real-time incident + agent activity stream.
 
 **Auth:**
+
 - [ ] Initial: API key / basic auth (single-org self-hosted).
 - [ ] Stretch: pluggable OAuth / SSO adapter for multi-user orgs.
