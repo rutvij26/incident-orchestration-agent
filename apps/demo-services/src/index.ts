@@ -57,7 +57,7 @@ async function main(): Promise<void> {
   app.post("/api/orders", (req, res) => {
     try {
       const { items } = req.body ?? {};
-      const total = (items as Array<{ price: number; qty: number }>).reduce(
+      const total = ((items ?? []) as Array<{ price: number; qty: number }>).reduce(
         (sum, item) => sum + item.price * item.qty,
         0,
       );
