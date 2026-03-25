@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { queryLoki } from "../lib/loki.js";
+import { getConfig } from "../lib/config.js";
+import { aggregateLogs, resolveSourceConnectors } from "../connectors/registry.js";
 import type { Incident, IncidentSummary, LogEvent } from "../lib/types.js";
 import { createIssue } from "../lib/github.js";
 import { initMemory, saveIncidents } from "../memory/postgres.js";
@@ -9,13 +10,20 @@ import { refreshRepoCache as refreshRepoCacheImpl } from "../rag/repoCache.js";
 
 type FetchLogsInput = {
   lookbackMinutes: number;
-  query: string;
+  /** @deprecated The query is now configured per-connector via LOKI_QUERY / SOURCE_CONNECTORS. */
+  query?: string;
 };
 
 export async function fetchRecentLogs(
   input: FetchLogsInput,
 ): Promise<LogEvent[]> {
-  return queryLoki(input.query, input.lookbackMinutes);
+  const end = new Date();
+  const start = new Date(end.getTime() - input.lookbackMinutes * 60 * 1000);
+  return aggregateLogs(resolveSourceConnectors(getConfig()), {
+    start,
+    end,
+    limit: 500,
+  });
 }
 
 type DetectedIncident = {

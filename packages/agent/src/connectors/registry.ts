@@ -5,6 +5,7 @@ import { AnthropicLlmConnector } from "./llm/anthropic.js";
 import { GeminiLlmConnector } from "./llm/gemini.js";
 import { OpenAIEmbeddingConnector } from "./embedding/openai.js";
 import { GeminiEmbeddingConnector } from "./embedding/gemini.js";
+import { LokiSourceConnector } from "./source/loki.js";
 import type { SourceConnector, LogEvent } from "./source/interface.js";
 
 export type { LlmConnector } from "./llm/interface.js";
@@ -136,6 +137,29 @@ export function resolveEmbeddingConnector(
   return null;
 }
 
+// ─── Source connectors ───────────────────────────────────────────────────────
+
+/**
+ * Resolves the active list of SourceConnectors from config.
+ * Reads `SOURCE_CONNECTORS` (comma-separated). Defaults to `"loki"`.
+ *
+ * Each named connector is only included when its required configuration is
+ * present. Multiple connectors are queried in parallel via `aggregateLogs()`.
+ */
+export function resolveSourceConnectors(config: Config): SourceConnector[] {
+  const names = config.SOURCE_CONNECTORS.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  return names.flatMap((name): SourceConnector[] => {
+    if (name === "loki") {
+      return [new LokiSourceConnector(config.LOKI_URL, config.LOKI_QUERY)];
+    }
+    logger.warn(`resolveSourceConnectors: unknown connector "${name}", skipping`);
+    return [];
+  });
+}
+
 // ─── Multi-connector helpers ──────────────────────────────────────────────────
 
 /**
@@ -183,7 +207,6 @@ export async function withFallback<C, T>(
  * Parallel log aggregation: queries all source connectors concurrently,
  * merges results, and deduplicates by `(timestamp, message)`.
  * Connector failures are silently skipped so one bad source never blocks others.
- * Full implementation lands in Milestone 5 when Loki is migrated.
  */
 export async function aggregateLogs(
   connectors: SourceConnector[],

@@ -45,12 +45,14 @@ Establish the `connectors/` folder, multi-connector helpers, and migrate the alr
 
 ---
 
-### Milestone 5 — Source Connectors
+### Milestone 5 — Source Connectors ✅
 
 - [x] Create `connectors/source/interface.ts` (`SourceConnector`).
-- [ ] Migrate `lib/loki.ts` → `connectors/source/loki.ts`.
-- [ ] Update `incidentActivities.fetchRecentLogs` to call `aggregateLogs()` instead of `queryLoki` directly.
-- [ ] Add `SOURCE_CONNECTORS=loki` to config and `.env.example`.
+- [x] Migrate `lib/loki.ts` → `connectors/source/loki.ts` (`LokiSourceConnector`). `lib/loki.ts` kept as a thin backward-compat wrapper.
+- [x] Update `incidentActivities.fetchRecentLogs` to call `aggregateLogs(resolveSourceConnectors(config), ...)` instead of `queryLoki` directly.
+- [x] Add `resolveSourceConnectors()` to `connectors/registry.ts`.
+- [x] Add `SOURCE_CONNECTORS=loki` to config (default) and `.env.example`.
+- [x] 12 new `LokiSourceConnector` tests; all 374 agent tests pass.
 - [ ] Follow-on connectors (each independent): `datadog.ts`, `cloudwatch.ts`, `elasticsearch.ts`.
 
 ---
