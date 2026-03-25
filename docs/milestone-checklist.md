@@ -52,12 +52,127 @@ Establish the `connectors/` folder, multi-connector helpers, and migrate the alr
 - [x] Update `incidentActivities.fetchRecentLogs` to call `aggregateLogs(resolveSourceConnectors(config), ...)` instead of `queryLoki` directly.
 - [x] Add `resolveSourceConnectors()` to `connectors/registry.ts`.
 - [x] Add `SOURCE_CONNECTORS=loki` to config (default) and `.env.example`.
-- [x] 12 new `LokiSourceConnector` tests; all 374 agent tests pass.
-- [ ] Follow-on connectors (each independent): `datadog.ts`, `cloudwatch.ts`, `elasticsearch.ts`.
+- [x] Fix `extractStreams` null-data bug (`typeof null === "object"` guard).
+- [x] Add `logger.warn` for unknown source connector names.
+- [x] 15 `LokiSourceConnector` tests + 6 `resolveSourceConnectors` registry tests; all 383 agent tests pass.
 
 ---
 
-### Milestone 6 — Issue + Repo Connectors
+## 🔄 Pivot: Self-Hostable Product (Milestones 6–11)
+
+> **Strategic decision (2026-03-24):** Rather than expanding connectors first, the priority is to make this a self-hostable product that any small engineering team can run in one command. A web dashboard replaces `.env` file configuration. Docker images are published to Docker Hub so teams don't need to clone or build anything.
+>
+> See `docs/architecture.md` for the full technical design.
+
+---
+
+### Milestone 6 — Shared Package + DB-Backed Config (Foundation)
+
+Everything else depends on this.
+
+- [ ] Create `packages/shared/` (`@agentic/shared`) with:
+  - `src/types/incident.ts` — `Incident`, `IncidentSummary`, `LogEvent` (moved from `agent/lib/types.ts`)
+  - `src/types/config.ts` — `ConfigRecord`, config group enums
+  - `src/schemas/config.ts` — Zod schema (shared between agent + dashboard)
+  - `src/constants/severity.ts`, `src/constants/defaults.ts`
+  - `src/index.ts` — barrel export
+- [ ] Create `packages/agent/src/lib/configLoader.ts`:
+  - Dual-mode: `CONFIG_SOURCE=db` (polls `agent_config` table every 30s) or `CONFIG_SOURCE=env` (legacy `.env`)
+  - AES-256-GCM encryption/decryption for sensitive fields (`ENCRYPTION_KEY` bootstrap env var)
+  - Same `getConfig()` API — all existing callers unaffected
+- [ ] Modify `packages/agent/src/lib/config.ts` to delegate to `configLoader.ts`
+- [ ] Modify `packages/agent/src/worker.ts` to initialise config loader on boot
+- [ ] Add new DB tables in `packages/agent/src/memory/postgres.ts`:
+  - `agent_config` — key/value config store with group + sensitive flag
+  - `workflow_runs` — per-run audit log (id, status, started_at, incidents_found, trigger)
+  - `schedule_config` — scheduling settings (interval_minutes, enabled, lookback_minutes)
+- [ ] Add columns to existing tables:
+  - `incident_memory`: `status`, `issue_url`, `pr_url`, `created_at`, `workflow_run_id`
+  - `auto_fix_attempts`: `pr_url`, `tests_passed`, `plan_summary`, `duration_ms`
+- [ ] Update `packages/agent/src/lib/types.ts` to re-export from `@agentic/shared` (backward compat)
+- [ ] All 383 existing agent tests continue to pass
+
+---
+
+### Milestone 7 — Dashboard: Setup Wizard + Settings UI
+
+- [ ] Scaffold `apps/dashboard/` Next.js 14 App Router project with shadcn/ui + Tailwind
+- [ ] `apps/dashboard/Dockerfile` with `output: 'standalone'` (minimal production image)
+- [ ] Root `docker-compose.yml` with all services (see `docs/architecture.md`):
+  - Grafana moved to port 3001; dashboard takes port 3000
+  - Demo services as optional `--profile demo`
+- [ ] `docker-compose.dev.yml` with `build:` overrides for contributors
+- [ ] `.env.bootstrap` reduced to 3 vars: `POSTGRES_URL`, `TEMPORAL_ADDRESS`, `ENCRYPTION_KEY`
+- [ ] Setup wizard (`/setup`) — first-run detection; collects LLM key, GitHub token, Loki URL, repo; seeds `agent_config`
+- [ ] Settings pages (all groups configurable via UI):
+  - `/settings/general` — log source, escalation policy
+  - `/settings/integrations` — API keys (masked), GitHub config, test-connection buttons
+  - `/settings/autofix` — auto-fix mode, severity threshold, branch prefix, test command
+  - `/settings/rag` — embedding model, chunk size, similarity threshold
+  - `/settings/advanced` — Temporal address (read-only), OTEL endpoint
+- [ ] API routes: `GET/PUT /api/config`, `GET/PUT /api/config/[group]`, `POST /api/config/validate`
+- [ ] Sidebar navigation + responsive layout
+
+---
+
+### Milestone 8 — Dashboard: Live Incident Feed
+
+- [ ] Incident list page (`/incidents`) with severity filter, pagination, sort by time
+- [ ] SSE stream: `GET /api/incidents/feed` — polls `incident_memory` every 5s, pushes new rows as events
+- [ ] React `EventSource` hook — appends incidents in real-time without refresh
+- [ ] Incident detail page (`/incidents/[id]`) — full evidence, LLM summary, root cause, recommended actions, GitHub issue link
+- [ ] Severity badges, relative timestamps, collapsible evidence logs
+- [ ] API routes: `GET /api/incidents`, `GET /api/incidents/[id]`, `GET /api/incidents/feed`
+
+---
+
+### Milestone 9 — Dashboard: Workflow Controls + Temporal Scheduling
+
+- [ ] Create `packages/agent/src/scheduler.ts`:
+  - `createOrUpdateSchedule(opts)` — creates/updates Temporal Schedule
+  - `pauseSchedule()`, `unpauseSchedule()`
+  - `triggerNow()` — immediate one-off execution
+  - `getScheduleStatus()` — last run, next run, worker alive
+- [ ] Worker startup: read `schedule_config` from DB → ensure Temporal Schedule exists
+- [ ] Dashboard agent status widget — last scan time, next scheduled scan, worker connectivity indicator
+- [ ] Manual trigger button ("Scan Now") — calls `POST /api/workflow/trigger`
+- [ ] Schedule controls — set interval (5 / 15 / 30 / 60 min), pause/resume toggle
+- [ ] Workflow run history table — status, trigger type, duration, incidents found
+- [ ] API routes: `POST /api/workflow/trigger`, `GET/PUT /api/workflow/schedule`, `GET /api/workflow/status`
+
+---
+
+### Milestone 10 — Dashboard: Auto-Fix History
+
+- [ ] Auto-fix history page (`/autofix`) — timeline of all fix attempts
+- [ ] Per-attempt detail: incident link, fixability score, plan summary, PR link, test result (pass/fail), duration
+- [ ] Filter by outcome: `pr_created` / `skipped` / `failed`
+- [ ] PR link opens GitHub PR in new tab
+- [ ] API route: `GET /api/autofix`
+
+---
+
+### Milestone 11 — Docker Hub Publishing + GitHub Actions CI
+
+- [ ] `packages/agent/Dockerfile` — multi-stage Node.js build
+- [ ] `apps/dashboard/Dockerfile` — Next.js standalone output
+- [ ] `.github/workflows/publish.yml`:
+  - Triggers on push to `main` and on `v*` tags
+  - Runs `npm test` first (gate on green tests)
+  - Builds multi-arch images (`linux/amd64` + `linux/arm64`) with `docker buildx`
+  - Pushes to Docker Hub: `rutvij26/agentic-agent` and `rutvij26/agentic-dashboard`
+  - Tags: `latest` (main), `v1.0.0` + `v1` (on version tag)
+- [ ] Root `docker-compose.yml` updated to reference published images (`image: rutvij26/agentic-agent:latest`)
+- [ ] README rewritten: one-command install, Docker Hub badge, screenshot of dashboard
+- [ ] GitHub Secrets configured: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`
+
+---
+
+## Future Milestones (Post-Dashboard)
+
+> Connector expansion resumes after the self-hostable product is shipped.
+
+### Milestone 12 — Issue + Repo Connectors
 
 - [ ] Create `connectors/issue/interface.ts` (`IssueConnector`).
 - [ ] Create `connectors/repo/interface.ts` (`RepoConnector`).
@@ -65,115 +180,51 @@ Establish the `connectors/` folder, multi-connector helpers, and migrate the alr
 - [ ] Update `incidentActivities.ts` and `autoFix.ts` to use `resolveIssueConnectors()` + `fanOut()`.
 - [ ] Store per-tracker issue numbers in `incidents` Postgres table.
 - [ ] Follow-on connectors: `jira.ts`, `linear.ts`, `gitlab.ts` (issue); `gitlab.ts`, `bitbucket.ts` (repo).
+- [ ] Dashboard: connector selector UI for issue tracker + repo host (via settings page)
 
 ---
 
-### Milestone 7 — Notification Connectors
+### Milestone 13 — Notification Connectors
 
 - [ ] Create `connectors/notification/interface.ts` (`NotificationConnector`) with `NotificationEvent` union type.
 - [ ] Implement `connectors/notification/slack.ts` (incoming webhook).
 - [ ] Implement `connectors/notification/pagerduty.ts` (Events API v2).
 - [ ] Implement `connectors/notification/webhook.ts` (generic HTTP POST).
-- [ ] Wire `fanOut()` calls at incident raised, auto-fix started/succeeded/failed, and approval-required trigger points.
-- [ ] Add `NOTIFY_CONNECTORS=` to config and `.env.example` (empty = silent, no breaking change).
+- [ ] Wire `fanOut()` calls at incident raised, auto-fix started/succeeded/failed.
+- [ ] Add `NOTIFY_CONNECTORS=` to config and dashboard settings.
 
 ---
 
-### Milestone 8 — Sandbox Reliability + Runtime Limits
+### Milestone 14 — Additional Source Connectors
+
+- [ ] `connectors/source/datadog.ts` — Datadog Logs API.
+- [ ] `connectors/source/cloudwatch.ts` — AWS CloudWatch Logs.
+- [ ] `connectors/source/elasticsearch.ts` — Elasticsearch / OpenSearch.
+- [ ] Dashboard: source connector selector (Loki / Datadog / CloudWatch) with per-connector config fields.
+
+---
+
+### Milestone 15 — Sandbox Reliability + Cost Controls
 
 - [ ] Add resource limits (CPU/memory/pids) to Docker sandbox runs.
-- [ ] Add optional network allowlist or dependency cache.
-- [ ] Fix branch collision handling and add repo locks.
-
----
-
-### Milestone 9 — Cost Controls + Telemetry
-
 - [ ] Log token usage per LLM + embedding call.
-- [ ] Enforce per-run budgets; route low-severity incidents to cheaper models via `LLM_CONNECTORS` fallback chain.
-- [ ] Add metrics for auto-fix success rate and RAG retrieval quality.
+- [ ] Enforce per-run budgets; route low-severity incidents to cheaper models.
+- [ ] Dashboard: cost metrics panel (tokens used, estimated cost per run).
 
 ---
 
-### Milestone 10 — Governance + Approval
+### Milestone 16 — InfraConnector — Deploy Pod Control
 
-- [ ] Add approval gate before auto-fix for high/critical incidents.
-- [ ] Support `label` / `comment` / `always` approval modes with audit logging.
-
----
-
-### Milestone 11 — InfraConnector — Deploy Pod Control
-
-The "Jarvis moment": the agent can take immediate live infrastructure actions, not just submit PRs.
-
-- [ ] Create `connectors/infra/interface.ts` (`InfraConnector`) with:
-  - Read: `listPods()`, `getPodLogs()`, `describeDeployment()`.
-  - Write: `restartDeployment()`, `scaleDeployment()`, `rollbackDeployment()`, `applyManifest()`.
-- [ ] Implement `connectors/infra/kubernetes.ts` (wraps `kubectl` / Kubernetes API).
-- [ ] Add new Temporal activity `mitigateWithInfra(incident)` — fires in parallel with the LLM fix pipeline.
-- [ ] Add `INFRA_CONNECTORS=`, `KUBE_CONTEXT=`, `KUBE_NAMESPACE=` to config.
-- [ ] Follow-on connectors: `ecs.ts`, `docker-compose.ts`.
+- [ ] Create `connectors/infra/interface.ts` (`InfraConnector`).
+- [ ] Implement `connectors/infra/kubernetes.ts` (kubectl / Kubernetes API).
+- [ ] Add `mitigateWithInfra(incident)` Temporal activity — runs in parallel with LLM fix pipeline.
+- [ ] Dashboard: infra actions panel (restart pod, scale deployment, rollback).
 
 ---
 
-### Milestone 12 — Multi-Service Monitoring
+### Milestone 17 — Self-Learning Feedback Loop
 
-- [ ] Add `MONITORED_SERVICES` config — list of `{ name, source_query, repo_url, rag_subdir, issue_project }`.
-- [ ] Implement fan-out parent Temporal workflow that spawns one `incidentOrchestrationWorkflow` child per service.
-- [ ] Allow per-service connector overrides (e.g. one service → Jira, another → GitHub).
-
----
-
-### Milestone 13 — Scan Connectors — Vulnerability & Config Drift
-
-- [ ] Create `connectors/scan/interface.ts` (`ScanConnector`) returning `ScanFinding[]`.
-- [ ] Implement `connectors/scan/npm-audit.ts` and `connectors/scan/trivy.ts`.
-- [ ] Add `scanForVulnerabilities()` Temporal activity — runs all scan connectors in parallel in the sandbox.
-- [ ] Feed `ScanFinding[]` into the incident pipeline as `VulnerabilityIncident` type.
-- [ ] Auto-fix: generate dependency-bump PRs for critical CVEs.
-- [ ] Add `SCAN_CONNECTORS=`, `SCAN_SCHEDULE=daily` to config.
-
----
-
-### Milestone 14 — Self-Learning Feedback Loop
-
-- [ ] Extend `auto_fix_attempts` Postgres table with `production_outcome` and `recurrence_within_24h` columns.
-- [ ] Add `evaluateFixOutcome()` Temporal activity — polls `IssueConnector` for PR merge status, `SourceConnector` for recurrence.
+- [ ] Extend `auto_fix_attempts` with `production_outcome` and `recurrence_within_24h`.
+- [ ] Add `evaluateFixOutcome()` Temporal activity — polls for PR merge status and incident recurrence.
 - [ ] Feed outcomes back into fixability scoring heuristics.
-- [ ] Surface weekly digest via `NotificationConnector`: fix success rate, avg MTTR, cost per fix.
-
----
-
-### Milestone 15 — Web Portal (SRE Control Plane)
-
-Capstone milestone. A self-hosted Next.js portal + REST/WebSocket API that makes the entire agent accessible to any org without touching config files or CLIs. Built last so every button calls something that already works in the backend.
-
-**New packages:**
-
-- `apps/portal/` — Next.js frontend.
-- `packages/api/` — REST + WebSocket server (bridge between portal, Postgres, Temporal, and connector registry).
-
-**Portal panels:**
-
-- [ ] **Connectors** — add/remove/configure connectors via form UI; "Test connection" validates before saving.
-- [ ] **Incidents** — live feed of detected incidents with severity, status, LLM summary, and evidence logs.
-- [ ] **Approvals** — queue of auto-fix PRs awaiting review; shows diff + LLM reasoning; approve/reject unblocks Temporal workflow.
-- [ ] **Activity Log** — step-by-step human-readable timeline of agent actions per incident.
-- [ ] **Live Controls** — manually trigger a fix, pause/resume the agent, restart a pod, rollback a deployment — all audit-logged.
-- [ ] **Stack Context** — service catalog, runbook paste-in, on-call rotation info; stored in Postgres and injected into LLM prompts.
-- [ ] **Metrics** — fix success rate by incident type, avg MTTR, LLM cost per run, connector health (powered by Milestone 14 data).
-
-**API routes:**
-
-- [ ] `GET/POST /api/connectors` — read and update connector config.
-- [ ] `GET /api/incidents` — incident feed from Postgres.
-- [ ] `GET/POST /api/approvals` — pending fixes; POST unblocks Temporal approval signal.
-- [ ] `POST /api/controls/{action}` — trigger fix, pause agent, restart pod.
-- [ ] `GET/PUT /api/context` — service catalog and runbook store.
-- [ ] `GET /api/metrics` — fix rates, cost, MTTR aggregates.
-- [ ] WebSocket `/ws/feed` — real-time incident + agent activity stream.
-
-**Auth:**
-
-- [ ] Initial: API key / basic auth (single-org self-hosted).
-- [ ] Stretch: pluggable OAuth / SSO adapter for multi-user orgs.
+- [ ] Dashboard: weekly digest metrics (fix success rate, avg MTTR, cost per fix).
