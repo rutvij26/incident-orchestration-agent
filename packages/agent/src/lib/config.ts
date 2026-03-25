@@ -55,6 +55,8 @@ const ConfigSchema = z.object({
   // Connector overrides (optional – fall back to LLM_PROVIDER / EMBEDDING_PROVIDER when absent)
   LLM_CONNECTORS: z.string().optional(),
   EMBEDDING_CONNECTOR: z.string().optional(),
+  // Source connectors — comma-separated list of log backends to query
+  SOURCE_CONNECTORS: z.string().default("loki"),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

@@ -4,6 +4,7 @@ import {
   createEmbeddingConnector,
   resolveLlmConnectors,
   resolveEmbeddingConnector,
+  resolveSourceConnectors,
   fanOut,
   withFallback,
   aggregateLogs,
@@ -13,6 +14,8 @@ import { AnthropicLlmConnector } from "./llm/anthropic.js";
 import { GeminiLlmConnector } from "./llm/gemini.js";
 import { OpenAIEmbeddingConnector } from "./embedding/openai.js";
 import { GeminiEmbeddingConnector } from "./embedding/gemini.js";
+import { LokiSourceConnector } from "./source/loki.js";
+import { logger } from "../lib/logger.js";
 import type { SourceConnector, LogEvent } from "./source/interface.js";
 
 vi.mock("./llm/openai.js", () => ({
@@ -54,6 +57,13 @@ vi.mock("./embedding/gemini.js", () => ({
     })),
 }));
 
+vi.mock("./source/loki.js", () => ({
+  LokiSourceConnector: vi.fn().mockImplementation((...args: unknown[]) => ({
+    _type: "loki-source",
+    _args: args,
+  })),
+}));
+
 vi.mock("../lib/logger.js", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
@@ -75,6 +85,9 @@ const baseConfig = {
   EMBEDDING_DIM: 1536,
   LLM_CONNECTORS: undefined as string | undefined,
   EMBEDDING_CONNECTOR: undefined as string | undefined,
+  SOURCE_CONNECTORS: "loki",
+  LOKI_URL: "http://localhost:3100",
+  LOKI_QUERY: '{job="demo-services"}',
 } as any;
 
 // ─── createLlmConnector ──────────────────────────────────────────────────────
@@ -308,6 +321,70 @@ describe("resolveEmbeddingConnector", () => {
       GEMINI_API_KEY: "gem",
     });
     expect((result as any)._type).toBe("gemini-emb");
+  });
+});
+
+// ─── resolveSourceConnectors ─────────────────────────────────────────────────
+
+describe("resolveSourceConnectors", () => {
+  it("returns [LokiSourceConnector] for SOURCE_CONNECTORS=loki with correct args", () => {
+    const result = resolveSourceConnectors(baseConfig);
+    expect(LokiSourceConnector).toHaveBeenCalledWith(
+      "http://localhost:3100",
+      '{job="demo-services"}',
+    );
+    expect(result).toHaveLength(1);
+    expect((result[0] as any)._type).toBe("loki-source");
+  });
+
+  it("returns empty array for unknown connector name and logs a warning", () => {
+    const result = resolveSourceConnectors({
+      ...baseConfig,
+      SOURCE_CONNECTORS: "datadog",
+    });
+    expect(result).toHaveLength(0);
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining("datadog"),
+    );
+  });
+
+  it("returns empty array when SOURCE_CONNECTORS is empty string", () => {
+    const result = resolveSourceConnectors({
+      ...baseConfig,
+      SOURCE_CONNECTORS: "",
+    });
+    expect(result).toHaveLength(0);
+  });
+
+  it("returns two connectors for SOURCE_CONNECTORS=loki,loki", () => {
+    const result = resolveSourceConnectors({
+      ...baseConfig,
+      SOURCE_CONNECTORS: "loki,loki",
+    });
+    expect(result).toHaveLength(2);
+    expect((result[0] as any)._type).toBe("loki-source");
+    expect((result[1] as any)._type).toBe("loki-source");
+  });
+
+  it("trims whitespace around connector names", () => {
+    const result = resolveSourceConnectors({
+      ...baseConfig,
+      SOURCE_CONNECTORS: "  loki  ",
+    });
+    expect(result).toHaveLength(1);
+    expect((result[0] as any)._type).toBe("loki-source");
+  });
+
+  it("handles mixed known and unknown connectors", () => {
+    const result = resolveSourceConnectors({
+      ...baseConfig,
+      SOURCE_CONNECTORS: "loki,datadog",
+    });
+    expect(result).toHaveLength(1);
+    expect((result[0] as any)._type).toBe("loki-source");
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining("datadog"),
+    );
   });
 });
 

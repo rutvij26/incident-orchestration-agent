@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 
-vi.mock("../lib/loki.js", () => ({ queryLoki: vi.fn() }));
+vi.mock("../connectors/registry.js", () => ({
+  aggregateLogs: vi.fn(),
+  resolveSourceConnectors: vi.fn().mockReturnValue([]),
+}));
+vi.mock("../lib/config.js", () => ({ getConfig: vi.fn().mockReturnValue({}) }));
 vi.mock("../lib/github.js", () => ({ createIssue: vi.fn() }));
 vi.mock("../memory/postgres.js", () => ({
   initMemory: vi.fn().mockResolvedValue(undefined),
@@ -19,7 +23,7 @@ import {
   autoFixIncident,
   refreshRepoCache,
 } from "./incidentActivities.js";
-import { queryLoki } from "../lib/loki.js";
+import { aggregateLogs } from "../connectors/registry.js";
 import { createIssue } from "../lib/github.js";
 import { initMemory, saveIncidents } from "../memory/postgres.js";
 import {
@@ -55,19 +59,28 @@ afterEach(() => vi.clearAllMocks());
 // ─── fetchRecentLogs ────────────────────────────────────────────────────────
 
 describe("fetchRecentLogs", () => {
-  it("delegates to queryLoki with the provided query and lookback", async () => {
+  it("calls aggregateLogs with resolved source connectors and a time window derived from lookbackMinutes", async () => {
     const events: LogEvent[] = [
       { timestamp: now, message: "hello", labels: { job: "api" } },
     ];
-    vi.mocked(queryLoki).mockResolvedValue(events);
+    vi.mocked(aggregateLogs).mockResolvedValue(events);
 
-    const result = await fetchRecentLogs({
-      query: '{job="api"}',
-      lookbackMinutes: 15,
-    });
+    const result = await fetchRecentLogs({ lookbackMinutes: 15 });
 
-    expect(queryLoki).toHaveBeenCalledWith('{job="api"}', 15);
+    expect(aggregateLogs).toHaveBeenCalledOnce();
+    const [, opts] = vi.mocked(aggregateLogs).mock.calls[0];
+    expect(opts.limit).toBe(500);
+    const windowMs = opts.end.getTime() - opts.start.getTime();
+    expect(windowMs).toBeGreaterThanOrEqual(14 * 60 * 1000);
+    expect(windowMs).toBeLessThanOrEqual(16 * 60 * 1000);
     expect(result).toBe(events);
+  });
+
+  it("still accepts the deprecated query field without error", async () => {
+    vi.mocked(aggregateLogs).mockResolvedValue([]);
+    await expect(
+      fetchRecentLogs({ lookbackMinutes: 5, query: '{job="api"}' }),
+    ).resolves.toEqual([]);
   });
 });
 
