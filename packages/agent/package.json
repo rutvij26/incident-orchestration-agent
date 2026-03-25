@@ -19,6 +19,7 @@
     "rag:refresh": "tsx src/rag/refreshRepo.ts"
   },
   "dependencies": {
+    "@agentic/shared": "*",
     "@anthropic-ai/sdk": "^0.24.0",
     "@google/generative-ai": "^0.24.1",
     "@octokit/rest": "^21.0.2",

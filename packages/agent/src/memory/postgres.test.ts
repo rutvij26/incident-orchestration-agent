@@ -57,6 +57,70 @@ describe("initMemory", () => {
     expect(mockRelease).toHaveBeenCalled();
   });
 
+  it("creates the agent_config table", async () => {
+    mockConnect.mockResolvedValue(client);
+    mockQuery.mockResolvedValue({});
+    await initMemory();
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining("agent_config")
+    );
+  });
+
+  it("creates the workflow_runs table", async () => {
+    mockConnect.mockResolvedValue(client);
+    mockQuery.mockResolvedValue({});
+    await initMemory();
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining("workflow_runs")
+    );
+  });
+
+  it("creates the schedule_config table", async () => {
+    mockConnect.mockResolvedValue(client);
+    mockQuery.mockResolvedValue({});
+    await initMemory();
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining("schedule_config")
+    );
+  });
+
+  it("adds new columns to incident_memory", async () => {
+    mockConnect.mockResolvedValue(client);
+    mockQuery.mockResolvedValue({});
+    await initMemory();
+    const calls = mockQuery.mock.calls.map((c) => c[0] as string);
+    const alterIncident = calls.find(
+      (q) => q.includes("ALTER TABLE incident_memory") && q.includes("status")
+    );
+    expect(alterIncident).toBeDefined();
+    expect(alterIncident).toContain("issue_url");
+    expect(alterIncident).toContain("pr_url");
+    expect(alterIncident).toContain("workflow_run_id");
+  });
+
+  it("adds new columns to auto_fix_attempts", async () => {
+    mockConnect.mockResolvedValue(client);
+    mockQuery.mockResolvedValue({});
+    await initMemory();
+    const calls = mockQuery.mock.calls.map((c) => c[0] as string);
+    const alterAutoFix = calls.find(
+      (q) =>
+        q.includes("ALTER TABLE auto_fix_attempts") && q.includes("tests_passed")
+    );
+    expect(alterAutoFix).toBeDefined();
+    expect(alterAutoFix).toContain("plan_summary");
+    expect(alterAutoFix).toContain("duration_ms");
+  });
+
+  it("is idempotent — second call does not throw", async () => {
+    mockConnect.mockResolvedValue(client);
+    mockQuery.mockResolvedValue({});
+    await expect(initMemory()).resolves.toBeUndefined();
+    mockConnect.mockResolvedValue(client);
+    mockQuery.mockResolvedValue({});
+    await expect(initMemory()).resolves.toBeUndefined();
+  });
+
   it("releases the client even if a query throws", async () => {
     mockConnect.mockResolvedValue(client);
     mockQuery.mockRejectedValueOnce(new Error("extension error"));

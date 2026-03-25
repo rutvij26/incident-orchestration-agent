@@ -1,0 +1,28 @@
+# Dependencies
+node_modules
+**/node_modules
+
+# Auto-fix workspace clones (contains deeply nested node_modules with symlinks)
+.agentic/
+
+# Git
+.git
+.gitignore
+
+# Editor / OS
+.DS_Store
+*.log
+
+# Test / coverage output
+coverage/
+lcov.info
+
+# TypeScript build output (source is copied directly)
+packages/agent/dist/
+packages/shared/dist/
+
+# Apps not needed in agent image
+apps/observability/
+
+# Env files with secrets
+.env

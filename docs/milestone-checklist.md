@@ -96,7 +96,7 @@ Everything else depends on this.
 
 ### Milestone 7 — Dashboard: Setup Wizard + Settings UI
 
-- [ ] Scaffold `apps/dashboard/` Next.js 14 App Router project with shadcn/ui + Tailwind
+- [ ] Scaffold `apps/dashboard/` Next.js 16 App Router project with shadcn/ui + Tailwind
 - [ ] `apps/dashboard/Dockerfile` with `output: 'standalone'` (minimal production image)
 - [ ] Root `docker-compose.yml` with all services (see `docs/architecture.md`):
   - Grafana moved to port 3001; dashboard takes port 3000
