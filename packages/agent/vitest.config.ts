@@ -18,6 +18,7 @@ export default defineConfig({
         "src/lib/logger.ts",
         "src/lib/types.ts",
         "src/lib/config.ts",
+        "src/lib/configSchema.ts",
         "src/observability/**",
         "src/workflows/**",
         "src/rag/refreshRepo.ts",

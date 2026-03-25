@@ -75,7 +75,9 @@ services:
       - tempo
 
   agent:
-    build: ../../packages/agent
+    build:
+      context: ../..
+      dockerfile: packages/agent/Dockerfile
     command: ["/bin/sh", "-lc", "npm run worker"]
     env_file:
       - ../../.env

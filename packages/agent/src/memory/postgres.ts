@@ -45,6 +45,62 @@ export async function initMemory(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_auto_fix_attempts_incident_issue
       ON auto_fix_attempts (incident_id, issue_number)
     `);
+
+    // M6: DB-backed config store
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS agent_config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        encrypted BOOLEAN NOT NULL DEFAULT FALSE,
+        group_name TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    // M6: Workflow run audit log
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS workflow_runs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ,
+        status TEXT NOT NULL,
+        logs_scanned INTEGER DEFAULT 0,
+        incidents_found INTEGER DEFAULT 0,
+        issues_opened INTEGER DEFAULT 0,
+        fixes_attempted INTEGER DEFAULT 0,
+        error_message TEXT
+      )
+    `);
+
+    // M6: Scheduling configuration (singleton row)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS schedule_config (
+        id INTEGER PRIMARY KEY DEFAULT 1,
+        enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        cron_expression TEXT NOT NULL DEFAULT '*/15 * * * *',
+        temporal_schedule_id TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    // M6: Enrich incident_memory with dashboard-facing columns
+    await client.query(`
+      ALTER TABLE incident_memory
+        ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open',
+        ADD COLUMN IF NOT EXISTS issue_url TEXT,
+        ADD COLUMN IF NOT EXISTS pr_url TEXT,
+        ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW(),
+        ADD COLUMN IF NOT EXISTS workflow_run_id UUID
+    `);
+
+    // M6: Enrich auto_fix_attempts with dashboard-facing columns
+    await client.query(`
+      ALTER TABLE auto_fix_attempts
+        ADD COLUMN IF NOT EXISTS pr_url TEXT,
+        ADD COLUMN IF NOT EXISTS tests_passed BOOLEAN,
+        ADD COLUMN IF NOT EXISTS plan_summary TEXT,
+        ADD COLUMN IF NOT EXISTS duration_ms INTEGER
+    `);
   } finally {
     client.release();
   }

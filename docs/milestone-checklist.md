@@ -66,37 +66,37 @@ Establish the `connectors/` folder, multi-connector helpers, and migrate the alr
 
 ---
 
-### Milestone 6 — Shared Package + DB-Backed Config (Foundation)
+### Milestone 6 — Shared Package + DB-Backed Config (Foundation) ✅
 
 Everything else depends on this.
 
-- [ ] Create `packages/shared/` (`@agentic/shared`) with:
+- [x] Create `packages/shared/` (`@agentic/shared`) with:
   - `src/types/incident.ts` — `Incident`, `IncidentSummary`, `LogEvent` (moved from `agent/lib/types.ts`)
   - `src/types/config.ts` — `ConfigRecord`, config group enums
   - `src/schemas/config.ts` — Zod schema (shared between agent + dashboard)
   - `src/constants/severity.ts`, `src/constants/defaults.ts`
   - `src/index.ts` — barrel export
-- [ ] Create `packages/agent/src/lib/configLoader.ts`:
+- [x] Create `packages/agent/src/lib/configLoader.ts`:
   - Dual-mode: `CONFIG_SOURCE=db` (polls `agent_config` table every 30s) or `CONFIG_SOURCE=env` (legacy `.env`)
   - AES-256-GCM encryption/decryption for sensitive fields (`ENCRYPTION_KEY` bootstrap env var)
   - Same `getConfig()` API — all existing callers unaffected
-- [ ] Modify `packages/agent/src/lib/config.ts` to delegate to `configLoader.ts`
-- [ ] Modify `packages/agent/src/worker.ts` to initialise config loader on boot
-- [ ] Add new DB tables in `packages/agent/src/memory/postgres.ts`:
+- [x] Modify `packages/agent/src/lib/config.ts` to delegate to `configLoader.ts`
+- [x] Modify `packages/agent/src/worker.ts` to initialise config loader on boot + auto-index RAG repo on first boot
+- [x] Add new DB tables in `packages/agent/src/memory/postgres.ts`:
   - `agent_config` — key/value config store with group + sensitive flag
   - `workflow_runs` — per-run audit log (id, status, started_at, incidents_found, trigger)
   - `schedule_config` — scheduling settings (interval_minutes, enabled, lookback_minutes)
-- [ ] Add columns to existing tables:
+- [x] Add columns to existing tables:
   - `incident_memory`: `status`, `issue_url`, `pr_url`, `created_at`, `workflow_run_id`
   - `auto_fix_attempts`: `pr_url`, `tests_passed`, `plan_summary`, `duration_ms`
-- [ ] Update `packages/agent/src/lib/types.ts` to re-export from `@agentic/shared` (backward compat)
-- [ ] All 383 existing agent tests continue to pass
+- [x] Update `packages/agent/src/lib/types.ts` to re-export from `@agentic/shared` (backward compat)
+- [x] All 415 agent tests pass (383 pre-M6 + 32 new for configLoader/crypto)
 
 ---
 
 ### Milestone 7 — Dashboard: Setup Wizard + Settings UI
 
-- [ ] Scaffold `apps/dashboard/` Next.js 14 App Router project with shadcn/ui + Tailwind
+- [ ] Scaffold `apps/dashboard/` Next.js 16 App Router project with shadcn/ui + Tailwind
 - [ ] `apps/dashboard/Dockerfile` with `output: 'standalone'` (minimal production image)
 - [ ] Root `docker-compose.yml` with all services (see `docs/architecture.md`):
   - Grafana moved to port 3001; dashboard takes port 3000
