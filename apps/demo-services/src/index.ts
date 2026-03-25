@@ -50,14 +50,11 @@ async function main(): Promise<void> {
     res.status(401).json({ error: "Unauthorized" });
   });
 
-  // INTENTIONAL CRITICAL BUG: `items` is not null-guarded before `.reduce()`.
-  // When the request body omits `items` (or sends null), this throws:
-  //   TypeError: Cannot read properties of null (reading 'reduce')
-  // Fix: change `items` → `(items ?? [])` on the reduce call.
+  // FIXED: Added null guard (items ?? []) to prevent null reference error
   app.post("/api/orders", (req, res) => {
     try {
       const { items } = req.body ?? {};
-      const total = (items as Array<{ price: number; qty: number }>).reduce(
+      const total = ((items ?? []) as Array<{ price: number; qty: number }>).reduce(
         (sum, item) => sum + item.price * item.qty,
         0,
       );
