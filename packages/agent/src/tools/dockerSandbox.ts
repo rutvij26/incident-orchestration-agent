@@ -8,13 +8,15 @@ export type SandboxCommand = {
   env?: Record<string, string>;
   mounts?: Array<{ hostPath: string; containerPath: string; mode?: "ro" | "rw" }>;
   volumesFrom?: string;
+  /** Docker network mode. Defaults to "none" (fully isolated). Use "bridge" for installs. */
+  network?: string;
 };
 
 export async function runInSandbox(
   command: SandboxCommand,
 ): Promise<{ exitCode: number; output: string }> {
 
-  const args: string[] = ["run", "--rm", "--network", "none"];
+  const args: string[] = ["run", "--rm", "--network", command.network ?? "none"];
   if (command.workdir) {
     args.push("-w", command.workdir);
   }

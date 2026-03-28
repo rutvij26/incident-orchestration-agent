@@ -66,89 +66,105 @@ Establish the `connectors/` folder, multi-connector helpers, and migrate the alr
 
 ---
 
-### Milestone 6 — Shared Package + DB-Backed Config (Foundation)
+### Milestone 6 — Shared Package + DB-Backed Config (Foundation) ✅
 
 Everything else depends on this.
 
-- [ ] Create `packages/shared/` (`@agentic/shared`) with:
+- [x] Create `packages/shared/` (`@agentic/shared`) with:
   - `src/types/incident.ts` — `Incident`, `IncidentSummary`, `LogEvent` (moved from `agent/lib/types.ts`)
   - `src/types/config.ts` — `ConfigRecord`, config group enums
   - `src/schemas/config.ts` — Zod schema (shared between agent + dashboard)
   - `src/constants/severity.ts`, `src/constants/defaults.ts`
   - `src/index.ts` — barrel export
-- [ ] Create `packages/agent/src/lib/configLoader.ts`:
+- [x] Create `packages/agent/src/lib/configLoader.ts`:
   - Dual-mode: `CONFIG_SOURCE=db` (polls `agent_config` table every 30s) or `CONFIG_SOURCE=env` (legacy `.env`)
   - AES-256-GCM encryption/decryption for sensitive fields (`ENCRYPTION_KEY` bootstrap env var)
   - Same `getConfig()` API — all existing callers unaffected
-- [ ] Modify `packages/agent/src/lib/config.ts` to delegate to `configLoader.ts`
-- [ ] Modify `packages/agent/src/worker.ts` to initialise config loader on boot
-- [ ] Add new DB tables in `packages/agent/src/memory/postgres.ts`:
+- [x] Modify `packages/agent/src/lib/config.ts` to delegate to `configLoader.ts`
+- [x] Modify `packages/agent/src/worker.ts` to initialise config loader on boot
+- [x] Add new DB tables in `packages/agent/src/memory/postgres.ts`:
   - `agent_config` — key/value config store with group + sensitive flag
   - `workflow_runs` — per-run audit log (id, status, started_at, incidents_found, trigger)
   - `schedule_config` — scheduling settings (interval_minutes, enabled, lookback_minutes)
-- [ ] Add columns to existing tables:
+- [x] Add columns to existing tables:
   - `incident_memory`: `status`, `issue_url`, `pr_url`, `created_at`, `workflow_run_id`
   - `auto_fix_attempts`: `pr_url`, `tests_passed`, `plan_summary`, `duration_ms`
-- [ ] Update `packages/agent/src/lib/types.ts` to re-export from `@agentic/shared` (backward compat)
-- [ ] All 383 existing agent tests continue to pass
+- [x] Update `packages/agent/src/lib/types.ts` to re-export from `@agentic/shared` (backward compat)
+- [x] All 383 existing agent tests continue to pass
 
 ---
 
-### Milestone 7 — Dashboard: Setup Wizard + Settings UI
+### Milestone 7 — Dashboard: Setup Wizard + Settings UI ✅
 
-- [ ] Scaffold `apps/dashboard/` Next.js 16 App Router project with shadcn/ui + Tailwind
-- [ ] `apps/dashboard/Dockerfile` with `output: 'standalone'` (minimal production image)
-- [ ] Root `docker-compose.yml` with all services (see `docs/architecture.md`):
+- [x] Scaffold `apps/dashboard/` Next.js 15 App Router project with shadcn/ui + Tailwind CSS, dark mode (zinc/indigo palette)
+- [x] `apps/dashboard/Dockerfile` with `output: 'standalone'` (multi-stage, builds from monorepo root)
+- [x] Root `docker-compose.yml` with all services:
   - Grafana moved to port 3001; dashboard takes port 3000
-  - Demo services as optional `--profile demo`
-- [ ] `docker-compose.dev.yml` with `build:` overrides for contributors
-- [ ] `.env.bootstrap` reduced to 3 vars: `POSTGRES_URL`, `TEMPORAL_ADDRESS`, `ENCRYPTION_KEY`
-- [ ] Setup wizard (`/setup`) — first-run detection; collects LLM key, GitHub token, Loki URL, repo; seeds `agent_config`
-- [ ] Settings pages (all groups configurable via UI):
+  - demo-services starts by default (no profile gate)
+- [x] `docker-compose.dev.yml` with `build:` overrides for contributors
+- [x] `.env.bootstrap` reduced to 3 vars: `POSTGRES_URL`, `TEMPORAL_ADDRESS`, `ENCRYPTION_KEY`
+- [x] Setup wizard (`/setup`) — first-run detection (empty `agent_config`); 4-step wizard with per-step validation; collects LLM key, GitHub token, Loki URL, RAG repo; seeds `agent_config`
+- [x] Settings pages (all groups configurable via UI):
   - `/settings/general` — log source, escalation policy
-  - `/settings/integrations` — API keys (masked), GitHub config, test-connection buttons
+  - `/settings/integrations` — API keys (masked show/hide), GitHub config, test-connection buttons for Anthropic/OpenAI/Gemini/GitHub
   - `/settings/autofix` — auto-fix mode, severity threshold, branch prefix, test command
-  - `/settings/rag` — embedding model, chunk size, similarity threshold
+  - `/settings/rag` — repo URL, top K, min score, chunk size
   - `/settings/advanced` — Temporal address (read-only), OTEL endpoint
-- [ ] API routes: `GET/PUT /api/config`, `GET/PUT /api/config/[group]`, `POST /api/config/validate`
-- [ ] Sidebar navigation + responsive layout
+- [x] API routes: `GET/PUT /api/config`, `GET/PUT /api/config/[group]`, `POST /api/config/validate`
+  - Config group validation — invalid `[group]` returns 400 (no silent accepts)
+  - `writeConfig` wrapped in DB transaction (BEGIN/COMMIT/ROLLBACK)
+- [x] Sidebar navigation — VSCode-style icon-only 48px bar with tooltips
+- [x] Overview home page — stats bar, incidents feed, recent PRs, agent status widgets
+  - Direct DB query layer (`src/lib/queries/`) — no self-HTTP anti-pattern
+  - try/catch with zero-value fallbacks — one slow query never crashes the page
+  - `OverviewRefresher` — auto-refreshes on tab focus (10 s debounce)
+- [x] `RunAgentBtn` — full polling loop (3 s interval, `AbortController`), concurrent-run guard, Temporal deduplication (fixed workflowId → 409 on duplicate), `router.refresh()` on completion
+- [x] `AgentStatus` — running spinner (`Loader2 animate-spin`), `aria-live="polite"`, hydration-safe `<ClientDate>`
+- [x] `IncidentsFeed` + `RecentPRs` — `<ClientDate>` replaces `toLocaleString()` (fixes hydration mismatch); null `tests_passed` → "untested" badge
+- [x] Settings `SettingsForm` — `res.ok` check; `toast.success` / `toast.error` via sonner
+- [x] `TestConnectionBtn` — auto-resets to idle after 5 s
+- [x] Temporal client singleton (`globalThis._temporalClient`) + try/finally in run route (no connection leaks)
+- [x] `AUTO_FIX_MODE` Zod schema accepts legacy `"pr"` value via transform (DB backward compat)
+- [x] Docker sandbox `network` field — install step uses `"bridge"` for npm registry; test step uses `"none"`
+- [x] `agent_workspaces` named Docker volume so sandbox `--volumes-from` shares the workspace correctly
+- [x] DB indexes added: `idx_incident_memory_status_created`, `idx_incident_memory_created`, `idx_auto_fix_created`, `idx_workflow_runs_started_at`
+- [x] `next.config.ts` webpack `extensionAlias` — TypeScript ESM `.js` imports resolve to `.ts` files
+- [x] 415 agent tests still pass; Next.js build passes cleanly
 
 ---
 
-### Milestone 8 — Dashboard: Live Incident Feed
+### Milestone 8 — Dashboard: Live Incident Feed ✅ (core complete)
 
-- [ ] Incident list page (`/incidents`) with severity filter, pagination, sort by time
-- [ ] SSE stream: `GET /api/incidents/feed` — polls `incident_memory` every 5s, pushes new rows as events
-- [ ] React `EventSource` hook — appends incidents in real-time without refresh
-- [ ] Incident detail page (`/incidents/[id]`) — full evidence, LLM summary, root cause, recommended actions, GitHub issue link
-- [ ] Severity badges, relative timestamps, collapsible evidence logs
-- [ ] API routes: `GET /api/incidents`, `GET /api/incidents/[id]`, `GET /api/incidents/feed`
+- [x] Incident list page (`/incidents`) — severity badge, status filter tabs (All/Open/Acknowledged/Resolved), `<ClientDate>`, GitHub issue link, empty state CTA
+- [x] Status pill — click to update incident status optimistically (`PATCH /api/incidents/[id]/status`)
+- [x] Cursor-based pagination (composite `(created_at, id)` cursor)
+- [x] `loading.tsx` + `error.tsx` for the route
+- [x] API routes: `GET /api/incidents` (status filter + cursor), `PATCH /api/incidents/[id]/status`
+- [ ] SSE stream: `GET /api/incidents/feed` — real-time push (deferred to future milestone)
+- [ ] Incident detail page (`/incidents/[id]`) — full evidence, LLM summary, root cause (deferred)
 
 ---
 
-### Milestone 9 — Dashboard: Workflow Controls + Temporal Scheduling
+### Milestone 9 — Dashboard: Workflow Controls + Temporal Scheduling (partial ✅)
 
-- [ ] Create `packages/agent/src/scheduler.ts`:
-  - `createOrUpdateSchedule(opts)` — creates/updates Temporal Schedule
-  - `pauseSchedule()`, `unpauseSchedule()`
-  - `triggerNow()` — immediate one-off execution
-  - `getScheduleStatus()` — last run, next run, worker alive
+- [x] Manual trigger button ("Run now") — `POST /api/agent/run`, polling loop, concurrent-run guard, 409 on duplicate
+- [x] Agent status widget — last run time, status badge, running spinner, `<ClientDate>`
+- [x] `GET /api/overview/agent` — latest workflow run row for live status polling
+- [ ] Create `packages/agent/src/scheduler.ts` — `createOrUpdateSchedule`, `pauseSchedule`, `triggerNow`, `getScheduleStatus`
 - [ ] Worker startup: read `schedule_config` from DB → ensure Temporal Schedule exists
-- [ ] Dashboard agent status widget — last scan time, next scheduled scan, worker connectivity indicator
-- [ ] Manual trigger button ("Scan Now") — calls `POST /api/workflow/trigger`
 - [ ] Schedule controls — set interval (5 / 15 / 30 / 60 min), pause/resume toggle
 - [ ] Workflow run history table — status, trigger type, duration, incidents found
-- [ ] API routes: `POST /api/workflow/trigger`, `GET/PUT /api/workflow/schedule`, `GET /api/workflow/status`
+- [ ] API routes: `GET/PUT /api/workflow/schedule`, `GET /api/workflow/status`
 
 ---
 
-### Milestone 10 — Dashboard: Auto-Fix History
+### Milestone 10 — Dashboard: Auto-Fix History ✅
 
-- [ ] Auto-fix history page (`/autofix`) — timeline of all fix attempts
-- [ ] Per-attempt detail: incident link, fixability score, plan summary, PR link, test result (pass/fail), duration
-- [ ] Filter by outcome: `pr_created` / `skipped` / `failed`
-- [ ] PR link opens GitHub PR in new tab
-- [ ] API route: `GET /api/autofix`
+- [x] Auto-fix history page (`/autofix`) — timeline of all fix attempts
+- [x] Per-attempt detail: incident title + severity badge, outcome badge (`pr_created`/`skipped`/`failed`), PR link (opens in new tab), test status (✓ / ✗ / –), `<ClientDate>`
+- [x] Empty state: "No auto-fix attempts yet. Enable auto-fix in Settings → Auto-fix"
+- [x] `loading.tsx` + `error.tsx` for the route
+- [x] API route: `GET /api/autofix` (cursor-paginated, JOINs `auto_fix_attempts` + `incident_memory`)
 
 ---
 

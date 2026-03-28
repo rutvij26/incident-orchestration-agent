@@ -21,8 +21,10 @@ lcov.info
 packages/agent/dist/
 packages/shared/dist/
 
-# Apps not needed in agent image
-apps/observability/
+# Next.js build output
+apps/dashboard/.next/
+apps/dashboard/out/
 
 # Env files with secrets
 .env
+.env.bootstrap
