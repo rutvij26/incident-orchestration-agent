@@ -6,3 +6,6 @@ logs/
 *.log
 coverage/
 .agentic/
+# Next.js build output
+.next/
+apps/dashboard/tsconfig.tsbuildinfo

@@ -37,7 +37,11 @@ export const ConfigSchema = z.object({
   RAG_REPO_SUBDIR: z.string().optional(),
   RAG_REPO_CACHE_DIR: z.string().default(".agentic/repos"),
   RAG_REPO_REFRESH: z.enum(["pull", "reclone"]).default("pull"),
-  AUTO_FIX_MODE: z.enum(["off", "on"]).default("off"),
+  AUTO_FIX_MODE: z
+    .enum(["off", "on", "pr"])
+    .transform((v) => (v === "pr" ? "on" : v))
+    .pipe(z.enum(["off", "on"]))
+    .default("off"),
   AUTO_FIX_SEVERITY: z
     .enum(["low", "medium", "high", "critical", "all"])
     .default("all"),
@@ -45,7 +49,7 @@ export const ConfigSchema = z.object({
   AUTO_FIX_BRANCH_PREFIX: z.string().default("agentic-fix"),
   AUTO_FIX_TEST_COMMAND: z.string().default("npm run test"),
   AUTO_FIX_INSTALL_COMMAND: z.string().default("npm install --include=dev"),
-  AUTO_FIX_SANDBOX_IMAGE: z.string().default("node:20-slim"),
+  AUTO_FIX_SANDBOX_IMAGE: z.string().default("node:22-slim"),
   GITHUB_DEFAULT_BRANCH: z.string().default("main"),
   AUTO_FIX_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.5),
   AUTO_FIX_SKIP_AFTER_FAILURES: z.coerce.number().int().min(0).default(1),

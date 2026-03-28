@@ -11,9 +11,10 @@
   "scripts": {
     "dev:demo": "npm --workspace @agentic/demo-services run dev",
     "dev:agent": "npm --workspace @agentic/agent run worker",
-    "dev:stack": "docker compose -f apps/observability/docker-compose.yml up",
-    "dev:stack:down": "docker compose -f apps/observability/docker-compose.yml down -v",
-    "dev:all": "docker compose -f apps/observability/docker-compose.yml up --build",
+    "dev:dashboard": "npm --workspace @agentic/dashboard run dev",
+    "dev:stack": "docker compose up",
+    "dev:stack:down": "docker compose down -v",
+    "dev:all": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build",
     "run": "npm --workspace @agentic/agent run run",
     "rag:index": "npm --workspace @agentic/agent run rag:index",
     "rag:refresh": "npm --workspace @agentic/agent run rag:refresh",
@@ -28,5 +29,8 @@
     "observability"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "shadcn": "^4.1.0"
+  }
 }

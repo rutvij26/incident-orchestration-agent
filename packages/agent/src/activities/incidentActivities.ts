@@ -3,7 +3,7 @@ import { getConfig } from "../lib/config.js";
 import { aggregateLogs, resolveSourceConnectors } from "../connectors/registry.js";
 import type { Incident, IncidentSummary, LogEvent } from "../lib/types.js";
 import { createIssue } from "../lib/github.js";
-import { initMemory, saveIncidents } from "../memory/postgres.js";
+import { initMemory, saveIncidents, startWorkflowRun, completeWorkflowRun } from "../memory/postgres.js";
 import { summarizeIncident as summarizeWithLlm } from "../lib/llm.js";
 import { autoFixIncident as runAutoFix } from "../autofix/autoFix.js";
 import { refreshRepoCache as refreshRepoCacheImpl } from "../rag/repoCache.js";
@@ -235,6 +235,24 @@ export async function autoFixIncident(input: {
   prUrl?: string;
 }> {
   return runAutoFix(input);
+}
+
+/** Start a workflow run audit record and return its UUID. */
+export async function recordWorkflowStart(): Promise<string> {
+  return startWorkflowRun();
+}
+
+/** Complete a workflow run audit record. */
+export async function recordWorkflowComplete(params: {
+  runId: string;
+  status: "completed" | "failed";
+  logsScanned: number;
+  incidentsFound: number;
+  issuesOpened: number;
+  fixesAttempted: number;
+  errorMessage?: string;
+}): Promise<void> {
+  return completeWorkflowRun(params);
 }
 
 /** Refresh the repository cache. */

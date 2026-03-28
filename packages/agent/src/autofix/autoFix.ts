@@ -879,6 +879,7 @@ export async function autoFixIncident(
           : [{ hostPath: workDir, containerPath: "/workspace", mode: "rw" }],
         volumesFrom,
         timeoutMs: 15 * 60 * 1000,
+        network: "bridge", // install needs npm registry access
       });
       if (installResult.exitCode !== 0) {
         logger.warn("Auto-fix failed: sandbox install failed", {
@@ -1016,7 +1017,7 @@ export async function autoFixIncident(
       await applyPatch(diff, repoPath);
     }
 
-    const branchName = `${config.AUTO_FIX_BRANCH_PREFIX}/${input.incident.id}`;
+    const branchName = `${config.AUTO_FIX_BRANCH_PREFIX.replace(/\/+$/, "")}/${input.incident.id}`;
     logger.info("Auto-fix creating branch", {
       incidentId: input.incident.id,
       branch: branchName,

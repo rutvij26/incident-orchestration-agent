@@ -1,0 +1,23 @@
+# Override file for local development — builds images from source
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: packages/agent/Dockerfile
+    env_file:
+      - .env
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: apps/dashboard/Dockerfile
+    env_file:
+      - .env
+    environment:
+      PORT: "3000"
+
+  demo-services:
+    profiles: [demo]
+    build:
+      context: ./apps/demo-services

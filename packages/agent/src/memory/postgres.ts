@@ -46,6 +46,24 @@ export async function initMemory(): Promise<void> {
       ON auto_fix_attempts (incident_id, issue_number)
     `);
 
+    // M7: Dashboard query performance indexes
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_incident_memory_status_created
+      ON incident_memory (status, created_at DESC, id DESC)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_incident_memory_created
+      ON incident_memory (created_at DESC, id DESC)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_auto_fix_created
+      ON auto_fix_attempts (created_at DESC, id DESC)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_started_at
+      ON workflow_runs (started_at DESC)
+    `);
+
     // M6: DB-backed config store
     await client.query(`
       CREATE TABLE IF NOT EXISTS agent_config (
@@ -162,6 +180,54 @@ export async function recordAutoFixAttempt(params: {
         params.outcome,
         params.reason ?? null,
         params.fixabilityScore ?? null,
+      ]
+    );
+  } finally {
+    client.release();
+  }
+}
+
+export async function startWorkflowRun(): Promise<string> {
+  const client = await getPool().connect();
+  try {
+    const result = await client.query<{ id: string }>(
+      `INSERT INTO workflow_runs (status) VALUES ('running') RETURNING id`
+    );
+    return result.rows[0]!.id;
+  } finally {
+    client.release();
+  }
+}
+
+export async function completeWorkflowRun(params: {
+  runId: string;
+  status: "completed" | "failed";
+  logsScanned: number;
+  incidentsFound: number;
+  issuesOpened: number;
+  fixesAttempted: number;
+  errorMessage?: string;
+}): Promise<void> {
+  const client = await getPool().connect();
+  try {
+    await client.query(
+      `UPDATE workflow_runs
+       SET completed_at = NOW(),
+           status = $2,
+           logs_scanned = $3,
+           incidents_found = $4,
+           issues_opened = $5,
+           fixes_attempted = $6,
+           error_message = $7
+       WHERE id = $1`,
+      [
+        params.runId,
+        params.status,
+        params.logsScanned,
+        params.incidentsFound,
+        params.issuesOpened,
+        params.fixesAttempted,
+        params.errorMessage ?? null,
       ]
     );
   } finally {
